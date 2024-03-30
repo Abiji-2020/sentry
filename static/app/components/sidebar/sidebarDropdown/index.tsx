@@ -2,7 +2,6 @@ import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import {logout} from 'sentry/actionCreators/account';
-import {Client} from 'sentry/api';
 import DemoModeGate from 'sentry/components/acl/demoModeGate';
 import Avatar from 'sentry/components/avatar';
 import DeprecatedDropdownMenu from 'sentry/components/deprecatedDropdownMenu';
@@ -16,40 +15,34 @@ import TextOverflow from 'sentry/components/textOverflow';
 import {IconChevron, IconSentry} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
+import {useLegacyStore} from 'sentry/stores/useLegacyStore';
 import {space} from 'sentry/styles/space';
-import {Config, Organization, Project, User} from 'sentry/types';
-import withApi from 'sentry/utils/withApi';
-import withProjects from 'sentry/utils/withProjects';
+import useApi from 'sentry/utils/useApi';
+import useOrganization from 'sentry/utils/useOrganization';
+import useProjects from 'sentry/utils/useProjects';
+import {useUser} from 'sentry/utils/useUser';
 
-import SidebarMenuItemLink from '../sidebarMenuItemLink';
-import {CommonSidebarProps} from '../types';
+import type SidebarMenuItemLink from '../sidebarMenuItemLink';
+import type {CommonSidebarProps} from '../types';
 
 import Divider from './divider.styled';
 import SwitchOrganization from './switchOrganization';
 
-// TODO: make org and user optional props
 type Props = Pick<CommonSidebarProps, 'orientation' | 'collapsed'> & {
-  api: Client;
-  config: Config;
-  projects: Project[];
-  user: User;
   /**
    * Set to true to hide links within the organization
    */
   hideOrgLinks?: boolean;
-  org?: Organization;
 };
 
-function SidebarDropdown({
-  api,
-  org,
-  projects,
-  orientation,
-  collapsed,
-  config,
-  user,
-  hideOrgLinks,
-}: Props) {
+export default function SidebarDropdown({orientation, collapsed, hideOrgLinks}: Props) {
+  const api = useApi();
+
+  const config = useLegacyStore(ConfigStore);
+  const org = useOrganization({allowNull: true});
+  const user = useUser();
+  const {projects} = useProjects();
+
   const handleLogout = async () => {
     await logout(api);
     window.location.assign('/auth/login/');
@@ -70,7 +63,7 @@ function SidebarDropdown({
     hasOrganization || hasUser ? (
       <StyledAvatar
         collapsed={collapsed}
-        organization={org}
+        organization={org ?? undefined}
         user={!org ? user : undefined}
         size={32}
         round={false}
@@ -186,8 +179,6 @@ function SidebarDropdown({
     </DeprecatedDropdownMenu>
   );
 }
-
-export default withApi(withProjects(SidebarDropdown));
 
 const SentryLink = styled(Link)`
   color: ${p => p.theme.white};

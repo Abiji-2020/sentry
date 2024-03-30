@@ -1,8 +1,11 @@
+import {useEffect} from 'react';
+import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 import omit from 'lodash/omit';
 
-import Breadcrumbs, {Crumb} from 'sentry/components/breadcrumbs';
+import type {Crumb} from 'sentry/components/breadcrumbs';
+import Breadcrumbs from 'sentry/components/breadcrumbs';
 import ErrorBoundary from 'sentry/components/errorBoundary';
 import * as Layout from 'sentry/components/layouts/thirds';
 import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
@@ -12,29 +15,31 @@ import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
-import {
-  PageErrorAlert,
-  PageErrorProvider,
-} from 'sentry/utils/performance/contexts/pageError';
+import {PageAlert, PageAlertProvider} from 'sentry/utils/performance/contexts/pageAlert';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import useRouter from 'sentry/utils/useRouter';
-import {ReleaseComparisonSelector} from 'sentry/views/starfish/components/releaseSelector';
-import {SpanMetricsField} from 'sentry/views/starfish/types';
-import {formatVersionAndCenterTruncate} from 'sentry/views/starfish/utils/centerTruncate';
-import {EventSamples} from 'sentry/views/starfish/views/appStartup/screenSummary/eventSamples';
-import {SpanOperationTable} from 'sentry/views/starfish/views/appStartup/screenSummary/spanOperationTable';
-import {QueryParameterNames} from 'sentry/views/starfish/views/queryParameters';
+import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import {
-  MobileCursors,
-  MobileSortKeys,
-} from 'sentry/views/starfish/views/screens/constants';
+  PRIMARY_RELEASE_ALIAS,
+  ReleaseComparisonSelector,
+  SECONDARY_RELEASE_ALIAS,
+} from 'sentry/views/starfish/components/releaseSelector';
+import {SpanMetricsField} from 'sentry/views/starfish/types';
+import {SamplesTables} from 'sentry/views/starfish/views/appStartup/screenSummary/samples';
+import {
+  COLD_START_TYPE,
+  StartTypeSelector,
+} from 'sentry/views/starfish/views/appStartup/screenSummary/startTypeSelector';
+import {QueryParameterNames} from 'sentry/views/starfish/views/queryParameters';
 import {MetricsRibbon} from 'sentry/views/starfish/views/screens/screenLoadSpans/metricsRibbon';
 import {ScreenLoadSpanSamples} from 'sentry/views/starfish/views/screens/screenLoadSpans/samples';
 
 import AppStartWidgets from './widgets';
 
 type Query = {
+  [SpanMetricsField.APP_START_TYPE]: string;
+  'device.class': string;
   primaryRelease: string;
   project: string;
   secondaryRelease: string;
@@ -56,7 +61,22 @@ function ScreenSummary() {
     spanGroup,
     spanDescription,
     spanOp,
+    [SpanMetricsField.APP_START_TYPE]: appStartType,
+    'device.class': deviceClass,
   } = location.query;
+
+  useEffect(() => {
+    // Default the start type to cold start if not present
+    if (!appStartType) {
+      browserHistory.replace({
+        ...location,
+        query: {
+          ...location.query,
+          [SpanMetricsField.APP_START_TYPE]: COLD_START_TYPE,
+        },
+      });
+    }
+  }, [location, appStartType]);
 
   const startupModule: LocationDescriptor = {
     pathname: `/organizations/${organization.slug}/performance/mobile/app-startup/`,
@@ -65,14 +85,20 @@ function ScreenSummary() {
         QueryParameterNames.SPANS_SORT,
         'transaction',
         SpanMetricsField.SPAN_OP,
+        SpanMetricsField.APP_START_TYPE,
       ]),
     },
   };
 
   const crumbs: Crumb[] = [
     {
+      label: t('Performance'),
+      to: normalizeUrl(`/organizations/${organization.slug}/performance/`),
+      preservePageFilters: true,
+    },
+    {
       to: startupModule,
-      label: t('App Startup'),
+      label: t('App Starts'),
       preservePageFilters: true,
     },
     {
@@ -81,13 +107,10 @@ function ScreenSummary() {
     },
   ];
 
-  const truncatedPrimary = formatVersionAndCenterTruncate(primaryRelease ?? '', 10);
-  const truncatedSecondary = formatVersionAndCenterTruncate(secondaryRelease ?? '', 10);
-
   return (
     <SentryDocumentTitle title={transactionName} orgSlug={organization.slug}>
       <Layout.Page>
-        <PageErrorProvider>
+        <PageAlertProvider>
           <Layout.Header>
             <Layout.HeaderContent>
               <Breadcrumbs crumbs={crumbs} />
@@ -97,137 +120,81 @@ function ScreenSummary() {
 
           <Layout.Body>
             <Layout.Main fullWidth>
-              <PageErrorAlert />
-              <PageFiltersContainer>
-                <Container>
-                  <PageFilterBar condensed>
-                    <DatePageFilter />
-                  </PageFilterBar>
+              <PageAlert />
+              <HeaderContainer>
+                <ControlsContainer>
+                  <PageFiltersContainer>
+                    <PageFilterBar condensed>
+                      <DatePageFilter />
+                    </PageFilterBar>
+                  </PageFiltersContainer>
                   <ReleaseComparisonSelector />
-                  <MetricsRibbon
-                    dataset={DiscoverDatasets.SPANS_METRICS}
-                    filters={[
-                      `transaction:${transactionName}`,
-                      `span.op:[app.start.cold,app.start.warm]`,
-                      '(',
-                      'span.description:"Cold Start"',
-                      'OR',
-                      'span.description:"Warm Start"',
-                      ')',
-                    ]}
-                    fields={[
-                      `avg_if(span.duration,release,${primaryRelease})`,
-                      `avg_if(span.duration,release,${secondaryRelease})`,
-                      'span.op',
-                      'count()',
-                    ]}
-                    blocks={[
-                      {
-                        type: 'duration',
-                        title: t('Cold Start (%s)', truncatedPrimary),
-                        dataKey: data => {
-                          const matchingRow = data?.find(
-                            row => row['span.op'] === 'app.start.cold'
-                          );
-                          return (
-                            (matchingRow?.[
-                              `avg_if(span.duration,release,${primaryRelease})`
-                            ] as number) ?? 0
-                          );
-                        },
-                      },
-                      {
-                        type: 'duration',
-                        title: t('Cold Start (%s)', truncatedSecondary),
-                        dataKey: data => {
-                          const matchingRow = data?.find(
-                            row => row['span.op'] === 'app.start.cold'
-                          );
-                          return (
-                            (matchingRow?.[
-                              `avg_if(span.duration,release,${secondaryRelease})`
-                            ] as number) ?? 0
-                          );
-                        },
-                      },
-                      {
-                        type: 'duration',
-                        title: t('Warm Start (%s)', truncatedPrimary),
-                        dataKey: data => {
-                          const matchingRow = data?.find(
-                            row => row['span.op'] === 'app.start.warm'
-                          );
-                          return (
-                            (matchingRow?.[
-                              `avg_if(span.duration,release,${primaryRelease})`
-                            ] as number) ?? 0
-                          );
-                        },
-                      },
-                      {
-                        type: 'duration',
-                        title: t('Warm Start (%s)', truncatedSecondary),
-                        dataKey: data => {
-                          const matchingRow = data?.find(
-                            row => row['span.op'] === 'app.start.warm'
-                          );
-                          return (
-                            (matchingRow?.[
-                              `avg_if(span.duration,release,${secondaryRelease})`
-                            ] as number) ?? 0
-                          );
-                        },
-                      },
-                      {
-                        type: 'count',
-                        title: t('Count'),
-                        dataKey: data => {
-                          return data?.reduce(
-                            (acc, row) => acc + (row['count()'] as number),
-                            0
-                          );
-                        },
-                      },
-                    ]}
-                    referrer="api.starfish.mobile-startup-totals"
-                  />
-                </Container>
-              </PageFiltersContainer>
+                  <StartTypeSelector />
+                </ControlsContainer>
+                <MetricsRibbon
+                  dataset={DiscoverDatasets.SPANS_METRICS}
+                  filters={[
+                    `transaction:${transactionName}`,
+                    `span.op:app.start.${appStartType}`,
+                    '(',
+                    'span.description:"Cold Start"',
+                    'OR',
+                    'span.description:"Warm Start"',
+                    ')',
+                  ]}
+                  fields={[
+                    `avg_if(span.duration,release,${primaryRelease})`,
+                    `avg_if(span.duration,release,${secondaryRelease})`,
+                    `avg_compare(span.duration,release,${primaryRelease},${secondaryRelease})`,
+                    'count()',
+                  ]}
+                  blocks={[
+                    {
+                      type: 'duration',
+                      allowZero: false,
+                      title:
+                        appStartType === COLD_START_TYPE
+                          ? t('Cold Start (%s)', PRIMARY_RELEASE_ALIAS)
+                          : t('Warm Start (%s)', PRIMARY_RELEASE_ALIAS),
+                      dataKey: `avg_if(span.duration,release,${primaryRelease})`,
+                    },
+                    {
+                      type: 'duration',
+                      allowZero: false,
+                      title:
+                        appStartType === COLD_START_TYPE
+                          ? t('Cold Start (%s)', SECONDARY_RELEASE_ALIAS)
+                          : t('Warm Start (%s)', SECONDARY_RELEASE_ALIAS),
+                      dataKey: `avg_if(span.duration,release,${secondaryRelease})`,
+                    },
+                    {
+                      type: 'change',
+                      title: t('Change'),
+                      dataKey: `avg_compare(span.duration,release,${primaryRelease},${secondaryRelease})`,
+                    },
+                    {
+                      type: 'count',
+                      title: t('Count'),
+                      dataKey: 'count()',
+                    },
+                  ]}
+                  referrer="api.starfish.mobile-startup-totals"
+                />
+              </HeaderContainer>
               <ErrorBoundary mini>
                 <AppStartWidgets additionalFilters={[`transaction:${transactionName}`]} />
               </ErrorBoundary>
-              <EventSamplesContainer>
-                <ErrorBoundary mini>
-                  <div>
-                    <EventSamples
-                      cursorName={MobileCursors.RELEASE_1_EVENT_SAMPLE_TABLE}
-                      sortKey={MobileSortKeys.RELEASE_1_EVENT_SAMPLE_TABLE}
-                      release={primaryRelease}
-                      transaction={transactionName}
-                      showDeviceClassSelector
-                    />
-                  </div>
-                </ErrorBoundary>
-                <ErrorBoundary mini>
-                  <div>
-                    <EventSamples
-                      cursorName={MobileCursors.RELEASE_2_EVENT_SAMPLE_TABLE}
-                      sortKey={MobileSortKeys.RELEASE_2_EVENT_SAMPLE_TABLE}
-                      release={secondaryRelease}
-                      transaction={transactionName}
-                    />
-                  </div>
-                </ErrorBoundary>
-              </EventSamplesContainer>
-              <ErrorBoundary mini>
-                <SpanOperationTable
-                  transaction={transactionName}
-                  primaryRelease={primaryRelease}
-                  secondaryRelease={secondaryRelease}
-                />
-              </ErrorBoundary>
-              {spanGroup && spanOp && (
+              <SamplesContainer>
+                <SamplesTables transactionName={transactionName} />
+              </SamplesContainer>
+              {spanGroup && spanOp && appStartType && (
                 <ScreenLoadSpanSamples
+                  additionalFilters={{
+                    [SpanMetricsField.APP_START_TYPE]: appStartType,
+                    ...(deviceClass
+                      ? {[SpanMetricsField.DEVICE_CLASS]: deviceClass}
+                      : {}),
+                  }}
                   groupId={spanGroup}
                   transactionName={transactionName}
                   spanDescription={spanDescription}
@@ -248,7 +215,7 @@ function ScreenSummary() {
               )}
             </Layout.Main>
           </Layout.Body>
-        </PageErrorProvider>
+        </PageAlertProvider>
       </Layout.Page>
     </SentryDocumentTitle>
   );
@@ -256,20 +223,18 @@ function ScreenSummary() {
 
 export default ScreenSummary;
 
-const Container = styled('div')`
-  display: grid;
-  grid-template-rows: auto auto auto;
-  gap: ${space(2)};
-
-  @media (min-width: ${p => p.theme.breakpoints.large}) {
-    grid-template-rows: auto;
-    grid-template-columns: auto 1fr auto;
-  }
+const ControlsContainer = styled('div')`
+  display: flex;
+  gap: ${space(1.5)};
 `;
 
-const EventSamplesContainer = styled('div')`
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  margin-top: ${space(2)};
+const HeaderContainer = styled('div')`
+  display: flex;
+  flex-wrap: wrap;
   gap: ${space(2)};
+  justify-content: space-between;
+`;
+
+const SamplesContainer = styled('div')`
+  margin-top: ${space(2)};
 `;

@@ -12,11 +12,12 @@ external source, makes decisions around what to query and when, and is responsib
 intelligible output for the "post_process" module.  More information on its implementation can be
 found in the function.
 """
+
 from __future__ import annotations
 
-from collections import namedtuple
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Any, Mapping, Sequence, Union, cast
+from typing import Any, cast
 
 from rest_framework.exceptions import ParseError
 from snuba_sdk import (
@@ -45,7 +46,7 @@ from sentry.utils.snuba import raw_snql_query
 
 def handle_search_filters(
     search_config: dict[str, FieldProtocol],
-    search_filters: Sequence[Union[SearchFilter, str, ParenExpression]],
+    search_filters: Sequence[SearchFilter | str | ParenExpression],
 ) -> list[Condition]:
     """Convert search filters to snuba conditions."""
     result: list[Condition] = []
@@ -91,7 +92,7 @@ def handle_search_filters(
 def attempt_compressed_condition(
     result: list[Expression],
     condition: Condition,
-    condition_type: Union[And, Or],
+    condition_type: And | Or,
 ):
     """Unnecessary query optimization.
 
@@ -123,6 +124,8 @@ def search_filter_to_condition(
 
 # Everything below here will move to replays/query.py once we deprecate the old query behavior.
 # Leaving it here for now so this is easier to review/remove.
+import dataclasses
+
 from sentry.replays.usecases.query.configs.aggregate import search_config as agg_search_config
 from sentry.replays.usecases.query.configs.aggregate_sort import sort_config as agg_sort_config
 from sentry.replays.usecases.query.configs.aggregate_sort import sort_is_scalar_compatible
@@ -131,15 +134,19 @@ from sentry.replays.usecases.query.configs.scalar import (
     scalar_search_config,
 )
 
-Paginators = namedtuple("Paginators", ("limit", "offset"))
+
+@dataclasses.dataclass
+class Paginators:
+    limit: int
+    offset: int
 
 
 def query_using_optimized_search(
     fields: list[str],
-    search_filters: Sequence[Union[SearchFilter, str, ParenExpression]],
+    search_filters: Sequence[SearchFilter | str | ParenExpression],
     environments: list[str],
     sort: str | None,
-    pagination: Paginators | None,
+    pagination: Paginators,
     organization: Organization | None,
     project_ids: list[int],
     period_start: datetime,
@@ -177,16 +184,21 @@ def query_using_optimized_search(
         )
         referrer = "replays.query.browse_aggregated_conditions_subquery"
 
-    if pagination:
-        query = query.set_limit(pagination.limit)
-        query = query.set_offset(pagination.offset)
+    query = query.set_limit(pagination.limit)
+    query = query.set_offset(pagination.offset)
 
     subquery_response = execute_query(query, tenant_id, referrer)
+
+    # The query "has more rows" if the number of rows found matches the limit (which is
+    # the requested limit + 1).
+    has_more = len(subquery_response.get("data", [])) == pagination.limit
+    if has_more:
+        subquery_response["data"].pop()
 
     # These replay_ids are ordered by the OrderBy expression in the query above.
     replay_ids = [row["replay_id"] for row in subquery_response.get("data", [])]
     if not replay_ids:
-        return []
+        return [], has_more
 
     # The final aggregation step.  Here we pass the replay_ids as the only filter.  In this step
     # we select everything and use as much memory as we need to complete the operation.
@@ -205,11 +217,11 @@ def query_using_optimized_search(
         referrer="replays.query.browse_query",
     )["data"]
 
-    return _make_ordered(replay_ids, results)
+    return _make_ordered(replay_ids, results), has_more
 
 
 def make_scalar_search_conditions_query(
-    search_filters: Sequence[Union[SearchFilter, str, ParenExpression]],
+    search_filters: Sequence[SearchFilter | str | ParenExpression],
     sort: str | None,
     project_ids: list[int],
     period_start: datetime,
@@ -241,7 +253,7 @@ def make_scalar_search_conditions_query(
 
 
 def make_aggregate_search_conditions_query(
-    search_filters: Sequence[Union[SearchFilter, str, ParenExpression]],
+    search_filters: Sequence[SearchFilter | str | ParenExpression],
     sort: str | None,
     project_ids: list[int],
     period_start: datetime,
@@ -277,7 +289,7 @@ def make_full_aggregation_query(
     """Return a query to fetch every replay in the set."""
     from sentry.replays.query import QUERY_ALIAS_COLUMN_MAP, select_from_fields
 
-    def _select_from_fields() -> list[Union[Column, Function]]:
+    def _select_from_fields() -> list[Column | Function]:
         if fields:
             return select_from_fields(list(set(fields)))
         else:

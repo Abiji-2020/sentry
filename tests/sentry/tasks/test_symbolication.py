@@ -2,8 +2,9 @@ from unittest import mock
 from unittest.mock import patch
 
 import pytest
+from django.test import override_settings
 
-from sentry.lang.native.symbolicator import SymbolicatorTaskKind
+from sentry.lang.native.symbolicator import SymbolicatorPlatform, SymbolicatorTaskKind
 from sentry.plugins.base.v2 import Plugin2
 from sentry.tasks.store import preprocess_event
 from sentry.tasks.symbolication import (
@@ -216,6 +217,30 @@ def test_should_demote_symbolication_always_and_never(default_project):
 
 
 @django_db_all
+@override_settings(SENTRY_ENABLE_AUTO_LOW_PRIORITY_QUEUE=True)
+def test_should_demote_symbolication_with_lpq_projects(default_project):
+    with override_options(
+        {
+            "store.symbolicate-event-lpq-never": [],
+            "store.symbolicate-event-lpq-always": [],
+        }
+    ):
+        assert should_demote_symbolication(default_project.id, lpq_projects={default_project.id})
+
+
+@django_db_all
+@override_settings(SENTRY_ENABLE_AUTO_LOW_PRIORITY_QUEUE=True)
+def test_should_demote_symbolication_with_non_existing_lpq_projects(default_project):
+    with override_options(
+        {
+            "store.symbolicate-event-lpq-never": [],
+            "store.symbolicate-event-lpq-always": [],
+        }
+    ):
+        assert not should_demote_symbolication(default_project.id)
+
+
+@django_db_all
 @patch("sentry.event_manager.EventManager.save", return_value=None)
 def test_submit_symbolicate_queue_switch(
     self,
@@ -237,7 +262,9 @@ def test_submit_symbolicate_queue_switch(
     is_low_priority = mock_should_demote_symbolication(default_project.id)
     assert is_low_priority
     with TaskRunner():
-        task_kind = SymbolicatorTaskKind(is_low_priority=is_low_priority)
+        task_kind = SymbolicatorTaskKind(
+            platform=SymbolicatorPlatform.native, is_low_priority=is_low_priority
+        )
         mock_submit_symbolicate(
             task_kind,
             cache_key="e:1",

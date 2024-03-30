@@ -37,7 +37,7 @@ class NoteTestCase(ActivityTestCase):
                 type="workflow",
                 value="always",
             )
-        UserOption.objects.create(user=self.user, key="self_notifications", value="1")
+            UserOption.objects.create(user=self.user, key="self_notifications", value="1")
 
         participants = self.email.get_participants_with_group_subscription_reason()
         actual = dict(participants.get_participants_by_provider(ExternalProviders.EMAIL))
@@ -55,7 +55,7 @@ class NoteTestCase(ActivityTestCase):
                 type="workflow",
                 value="always",
             )
-        UserOption.objects.create(user=self.user, key="self_notifications", value="0")
+            UserOption.objects.create(user=self.user, key="self_notifications", value="0")
 
         participants = self.email.get_participants_with_group_subscription_reason()
         assert len(participants.get_participants_by_provider(ExternalProviders.EMAIL)) == 0
@@ -69,7 +69,7 @@ class NoteTestCase(ActivityTestCase):
                 type="workflow",
                 value="always",
             )
-        UserOption.objects.create(user=self.user, key="self_notifications", value="1")
+            UserOption.objects.create(user=self.user, key="self_notifications", value="1")
         email = NoteActivityNotification(
             Activity(
                 project=self.project,

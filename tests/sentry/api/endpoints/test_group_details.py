@@ -27,14 +27,13 @@ from sentry.silo import SiloMode
 from sentry.testutils.cases import APITestCase, SnubaTestCase
 from sentry.testutils.helpers.datetime import freeze_time
 from sentry.testutils.helpers.features import with_feature
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.testutils.skips import requires_snuba
 from sentry.types.activity import ActivityType
 
 pytestmark = [requires_snuba]
 
 
-@region_silo_test
 class GroupDetailsTest(APITestCase, SnubaTestCase):
     def test_with_numerical_id(self):
         self.login_as(user=self.user)
@@ -211,7 +210,10 @@ class GroupDetailsTest(APITestCase, SnubaTestCase):
             organization=self.organization,
             scopes=("project:read", "org:read", "event:write"),
         )
-        token = internal_app.installations.first().api_token
+        token = self.create_internal_integration_token(
+            user=self.user,
+            internal_integration=internal_app,
+        )
 
         group = self.create_group(project=project)
         url = f"/api/0/issues/{group.id}/"
@@ -296,7 +298,6 @@ class GroupDetailsTest(APITestCase, SnubaTestCase):
             assert response.data["count"] == "16"
 
 
-@region_silo_test
 class GroupUpdateTest(APITestCase):
     def test_resolve(self):
         self.login_as(user=self.user)
@@ -658,7 +659,6 @@ class GroupUpdateTest(APITestCase):
             assert response.status_code == 429
 
 
-@region_silo_test
 class GroupDeleteTest(APITestCase):
     def test_delete(self):
         self.login_as(user=self.user)

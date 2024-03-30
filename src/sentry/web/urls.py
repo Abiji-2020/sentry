@@ -534,6 +534,11 @@ urlpatterns += [
                     name="sentry-customer-domain-organization-settings",
                 ),
                 re_path(
+                    r"^plugins/",
+                    react_page_view,
+                    name="sentry-customer-domain-plugins-settings",
+                ),
+                re_path(
                     r"^projects/",
                     react_page_view,
                     name="sentry-customer-domain-projects-settings",
@@ -743,7 +748,13 @@ urlpatterns += [
         react_page_view,
         name="discover",
     ),
-    # DDM
+    # DDM new
+    re_path(
+        r"^metrics/",
+        react_page_view,
+        name="metrics",
+    ),
+    # TODO(metrics): fade this out
     re_path(
         r"^ddm/",
         react_page_view,
@@ -991,6 +1002,16 @@ urlpatterns += [
                     name="sentry-organization-replay-rage-clicks",
                 ),
                 re_path(
+                    r"^(?P<organization_slug>[\w_-]+)/crons/$",
+                    react_page_view,
+                    name="sentry-organization-crons",
+                ),
+                re_path(
+                    r"^(?P<organization_slug>[\w_-]+)/crons/(?P<project_slug>[\w_-]+)/(?P<monitor_slug>[\w_-]+)/$",
+                    react_page_view,
+                    name="sentry-organization-cron-monitor-details",
+                ),
+                re_path(
                     r"^(?P<organization_slug>[\w_-]+)/restore/$",
                     generic_react_page_view,
                     name="sentry-restore-organization",
@@ -1060,7 +1081,7 @@ urlpatterns += [
     re_path(
         r"^robots\.txt$",
         api.robots_txt,
-        name="sentry-api-robots-txt",
+        name="sentry-robots-txt",
     ),
     # Force a 404 of favicon.ico.
     # This url is commonly requested by browsers, and without
@@ -1156,7 +1177,7 @@ urlpatterns += [
         GenericReactPageView.as_view(auth_required=False),
         name="sentry-join-request",
     ),
-    # Keep named URL for for things using reverse
+    # Keep named URL for things using reverse
     re_path(
         r"^(?P<organization_slug>[\w_-]+)/issues/(?P<short_id>[\w_-]+)/$",
         react_page_view,

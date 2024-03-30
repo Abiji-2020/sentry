@@ -3,7 +3,7 @@ import * as Sentry from '@sentry/react';
 
 import {trackAnalytics} from 'sentry/utils/analytics';
 import type useReplayReader from 'sentry/utils/replays/hooks/useReplayReader';
-import {BreadcrumbFrame} from 'sentry/utils/replays/types';
+import type {BreadcrumbFrame} from 'sentry/utils/replays/types';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjectFromSlug from 'sentry/utils/useProjectFromSlug';
 
@@ -65,7 +65,7 @@ function useLogReplayDataLoaded({fetchError, fetching, projectSlug, replay}: Pro
       tags: {
         // This is a boolean to reduce cardinality -- technically this can
         // match 7.8.x, but replay wasn't released in that version, so this should be fine
-        recentSdkVersion: replayRecord.sdk.version.startsWith('7.8'),
+        recentSdkVersion: replayRecord.sdk.version?.startsWith('7.8') ?? false,
       },
     };
 

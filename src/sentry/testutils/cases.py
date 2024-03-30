@@ -7,10 +7,11 @@ import os.path
 import random
 import re
 import time
+from collections.abc import Mapping, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
-from typing import Any, Dict, List, Literal, Mapping, Optional, Sequence, Union
+from typing import Any, Literal, Union
 from unittest import mock
 from urllib.parse import urlencode
 from uuid import uuid4
@@ -34,10 +35,12 @@ from django.test import TransactionTestCase as DjangoTransactionTestCase
 from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 from django.urls import resolve, reverse
-from django.utils import timezone as django_timezone
+from django.utils import timezone
 from django.utils.functional import cached_property
 from requests.utils import CaseInsensitiveDict, get_encoding_from_headers
 from rest_framework import status
+from rest_framework.request import Request
+from rest_framework.response import Response
 from rest_framework.test import APITestCase as BaseAPITestCase
 from sentry_relay.consts import SPAN_STATUS_NAME_TO_CODE
 from snuba_sdk import Granularity, Limit, Offset
@@ -53,14 +56,13 @@ from sentry.auth.staff import COOKIE_NAME as STAFF_COOKIE_NAME
 from sentry.auth.staff import COOKIE_PATH as STAFF_COOKIE_PATH
 from sentry.auth.staff import COOKIE_SALT as STAFF_COOKIE_SALT
 from sentry.auth.staff import COOKIE_SECURE as STAFF_COOKIE_SECURE
-from sentry.auth.staff import Staff
+from sentry.auth.staff import STAFF_ORG_ID, Staff
 from sentry.auth.superuser import COOKIE_DOMAIN as SU_COOKIE_DOMAIN
 from sentry.auth.superuser import COOKIE_NAME as SU_COOKIE_NAME
 from sentry.auth.superuser import COOKIE_PATH as SU_COOKIE_PATH
 from sentry.auth.superuser import COOKIE_SALT as SU_COOKIE_SALT
 from sentry.auth.superuser import COOKIE_SECURE as SU_COOKIE_SECURE
-from sentry.auth.superuser import ORG_ID as SU_ORG_ID
-from sentry.auth.superuser import Superuser
+from sentry.auth.superuser import SUPERUSER_ORG_ID, Superuser
 from sentry.event_manager import EventManager
 from sentry.eventstore.models import Event
 from sentry.eventstream.snuba import SnubaEventStream
@@ -128,7 +130,6 @@ from sentry.testutils.pytest.selenium import Browser
 from sentry.types.condition_activity import ConditionActivity, ConditionActivityType
 from sentry.utils import json
 from sentry.utils.auth import SsoSession
-from sentry.utils.dates import to_timestamp
 from sentry.utils.json import dumps_htmlsafe
 from sentry.utils.performance_issues.performance_detection import detect_performance_problems
 from sentry.utils.retries import TimedRetryPolicy
@@ -177,7 +178,7 @@ __all__ = (
     "SCIMAzureTestCase",
     "MetricsEnhancedPerformanceTestCase",
     "MetricsAPIBaseTestCase",
-    "OrganizationMetricMetaIntegrationTestCase",
+    "OrganizationMetricsIntegrationTestCase",
     "ProfilesSnubaTestCase",
     "ReplaysAcceptanceTestCase",
     "ReplaysSnubaTestCase",
@@ -259,6 +260,7 @@ class BaseTestCase(Fixtures):
         auth=None,
         method=None,
         is_superuser=False,
+        is_staff=False,
         path="/",
         secure_scheme=False,
         subdomain=None,
@@ -292,6 +294,9 @@ class BaseTestCase(Fixtures):
             # XXX: this is gross, but it's a one-off and apis change only once in a great while
             request.superuser.set_logged_in(user)
         request.is_superuser = lambda: request.superuser.is_active
+
+        if is_staff:
+            request.staff.set_logged_in(user)
         request.successful_authenticator = None
         return request
 
@@ -304,8 +309,9 @@ class BaseTestCase(Fixtures):
         organization_id=None,
         organization_ids=None,
         superuser=False,
-        superuser_sso=True,
         staff=False,
+        staff_sso=True,
+        superuser_sso=True,
     ):
         if isinstance(user, OrganizationMember):
             with assume_test_silo_mode(SiloMode.CONTROL):
@@ -323,8 +329,11 @@ class BaseTestCase(Fixtures):
         else:
             organization_ids = set(organization_ids)
         if superuser and superuser_sso is not False:
-            if SU_ORG_ID:
-                organization_ids.add(SU_ORG_ID)
+            if SUPERUSER_ORG_ID:
+                organization_ids.add(SUPERUSER_ORG_ID)
+        if staff and staff_sso is not False:
+            if STAFF_ORG_ID:
+                organization_ids.add(SUPERUSER_ORG_ID)
         if organization_id:
             organization_ids.add(organization_id)
 
@@ -587,8 +596,6 @@ class TransactionTestCase(BaseTestCase, DjangoTransactionTestCase):
     # We need Django to flush all databases.
     databases: set[str] | str = "__all__"
 
-    pass
-
 
 class PerformanceIssueTestCase(BaseTestCase):
     # We need Django to flush all databases.
@@ -628,8 +635,12 @@ class PerformanceIssueTestCase(BaseTestCase):
         perf_event_manager = EventManager(event_data)
         perf_event_manager.normalize()
 
-        def detect_performance_problems_interceptor(data: Event, project: Project):
-            perf_problems = detect_performance_problems(data, project)
+        def detect_performance_problems_interceptor(
+            data: Event, project: Project, is_standalone_spans: bool = False
+        ):
+            perf_problems = detect_performance_problems(
+                data, project, is_standalone_spans=is_standalone_spans
+            )
             if fingerprint:
                 for perf_problem in perf_problems:
                     perf_problem.fingerprint = fingerprint
@@ -658,8 +669,10 @@ class APITestCase(BaseTestCase, BaseAPITestCase):
     Extend APITestCase to inherit access to `client`, an object with methods
     that simulate API calls to Sentry, and the helper `get_response`, which
     combines and simplifies a lot of tedious parts of making API calls in tests.
-    When creating API tests, use a new class per endpoint-method pair. The class
-    must set the string `endpoint`.
+    When creating API tests, use a new class per endpoint-method pair.
+
+    The class must set the string `endpoint`.
+    If your endpoint requires kwargs implement the `reverse_url` method.
     """
 
     # We need Django to flush all databases.
@@ -685,14 +698,18 @@ class APITestCase(BaseTestCase, BaseAPITestCase):
             * raw_data: (Optional) Sometimes we want to precompute the JSON body.
         :returns Response object
         """
-        url = reverse(self.endpoint, args=args)
-        # In some cases we want to pass querystring params to put/post, handle
-        # this here.
+        url = (
+            self.reverse_url()
+            if hasattr(self, "reverse_url")
+            else reverse(self.endpoint, args=args)
+        )
+        # In some cases we want to pass querystring params to put/post, handle this here.
         if "qs_params" in params:
             query_string = urlencode(params.pop("qs_params"), doseq=True)
             url = f"{url}?{query_string}"
 
         headers = params.pop("extra_headers", {})
+        format = params.pop("format", "json")
         raw_data = params.pop("raw_data", None)
         if raw_data and isinstance(raw_data, bytes):
             raw_data = raw_data.decode("utf-8")
@@ -701,7 +718,7 @@ class APITestCase(BaseTestCase, BaseAPITestCase):
         data = raw_data or params
         method = params.pop("method", self.method).lower()
 
-        return getattr(self.client, method)(url, format="json", data=data, **headers)
+        return getattr(self.client, method)(url, format=format, data=data, **headers)
 
     def get_success_response(self, *args, **params):
         """
@@ -913,8 +930,8 @@ class RuleTestCase(TestCase):
     def passes_activity(
         self,
         rule: RuleBase,
-        condition_activity: Optional[ConditionActivity] = None,
-        event_map: Optional[Dict[str, Any]] = None,
+        condition_activity: ConditionActivity | None = None,
+        event_map: dict[str, Any] | None = None,
     ):
         if condition_activity is None:
             condition_activity = self.get_condition_activity()
@@ -933,6 +950,22 @@ class RuleTestCase(TestCase):
             event = self.event
         state = self.get_state(**kwargs)
         assert rule.passes(event, state) is False
+
+
+class DRFPermissionTestCase(TestCase):
+    def make_request(self, *arg, **kwargs) -> Request:
+        """
+        Override the return type of make_request b/c DRF permission classes
+        expect a DRF request (go figure)
+        """
+        drf_request: Request = super().make_request(*arg, **kwargs)  # type: ignore[assignment]
+        return drf_request
+
+    def setUp(self):
+        self.superuser = self.create_user(is_superuser=True, is_staff=False)
+        self.staff_user = self.create_user(is_staff=True, is_superuser=False)
+        self.superuser_request = self.make_request(user=self.superuser, is_superuser=True)
+        self.staff_request = self.make_request(user=self.staff_user, method="GET", is_staff=True)
 
 
 class PermissionTestCase(TestCase):
@@ -1073,6 +1106,9 @@ class CliTestCase(TestCase):
 
 
 @pytest.mark.usefixtures("browser")
+# Assume acceptance tests are not using self-hosted, since most devs are developing for SaaS and
+# generally self-hosted specific pages should not appear during acceptance tests
+@override_settings(SENTRY_SELF_HOSTED=False)
 class AcceptanceTestCase(TransactionTestCase):
     browser: Browser
 
@@ -1080,7 +1116,7 @@ class AcceptanceTestCase(TransactionTestCase):
     def _setup_today(self):
         with mock.patch(
             "django.utils.timezone.now",
-            return_value=(datetime(2013, 5, 18, 15, 13, 58, 132928, tzinfo=timezone.utc)),
+            return_value=(datetime(2013, 5, 18, 15, 13, 58, 132928, tzinfo=UTC)),
         ):
             yield
 
@@ -1322,11 +1358,39 @@ class SnubaTestCase(BaseTestCase):
             == 200
         )
 
-    def store_metric_summary(self, metric_summary):
+    def store_metrics_summary(self, span):
+        common_fields = {
+            "duration_ms": span["duration_ms"],
+            "end_timestamp": (span["start_timestamp_ms"] + span["duration_ms"]) / 1000,
+            "group": span["sentry_tags"].get("group", "0"),
+            "is_segment": span["is_segment"],
+            "project_id": span["project_id"],
+            "received": span["received"],
+            "retention_days": span["retention_days"],
+            "segment_id": span.get("segment_id", "0"),
+            "span_id": span["span_id"],
+            "trace_id": span["trace_id"],
+        }
+        rows = []
+        for mri, summaries in span.get("_metrics_summary", {}).items():
+            for summary in summaries:
+                rows.append(
+                    {
+                        **common_fields,
+                        **{
+                            "count": summary.get("count", 0),
+                            "max": summary.get("max", 0.0),
+                            "mri": mri,
+                            "min": summary.get("min", 0.0),
+                            "sum": summary.get("sum", 0.0),
+                            "tags": summary.get("tags", {}),
+                        },
+                    }
+                )
         assert (
             requests.post(
                 settings.SENTRY_SNUBA + "/tests/entities/metrics_summaries/insert",
-                data=json.dumps([metric_summary]),
+                data=json.dumps(rows),
             ).status_code
             == 200
         )
@@ -1410,27 +1474,28 @@ class BaseSpansTestCase(SnubaTestCase):
         project_id: int,
         trace_id: str,
         transaction_id: str,
-        span_id: Optional[str] = None,
-        profile_id: Optional[str] = None,
-        transaction: Optional[str] = None,
+        span_id: str | None = None,
+        profile_id: str | None = None,
+        transaction: str | None = None,
         duration: int = 10,
-        tags: Optional[Mapping[str, Any]] = None,
-        measurements: Optional[Mapping[str, Union[int, float]]] = None,
-        timestamp: Optional[datetime] = None,
+        exclusive_time: int = 5,
+        tags: Mapping[str, Any] | None = None,
+        measurements: Mapping[str, int | float] | None = None,
+        timestamp: datetime | None = None,
     ):
         if span_id is None:
             span_id = self._random_span_id()
         if timestamp is None:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = timezone.now()
 
         payload = {
             "project_id": project_id,
             "span_id": span_id,
             "trace_id": trace_id,
             "duration_ms": int(duration),
-            "exclusive_time_ms": 5,
+            "exclusive_time_ms": int(exclusive_time),
             "is_segment": True,
-            "received": datetime.now(tz=timezone.utc).timestamp(),
+            "received": timezone.now().timestamp(),
             "start_timestamp_ms": int(timestamp.timestamp() * 1000),
             "sentry_tags": {"transaction": transaction or "/hello"},
             "retention_days": 90,
@@ -1454,36 +1519,47 @@ class BaseSpansTestCase(SnubaTestCase):
         project_id: int,
         trace_id: str,
         transaction_id: str,
-        span_id: Optional[str] = None,
-        profile_id: Optional[str] = None,
-        transaction: Optional[str] = None,
-        op: Optional[str] = None,
+        span_id: str | None = None,
+        profile_id: str | None = None,
+        transaction: str | None = None,
+        op: str | None = None,
         duration: int = 10,
-        tags: Optional[Mapping[str, Any]] = None,
-        timestamp: Optional[datetime] = None,
+        exclusive_time: int = 5,
+        tags: Mapping[str, Any] | None = None,
+        measurements: Mapping[str, int | float] | None = None,
+        timestamp: datetime | None = None,
         store_only_summary: bool = False,
-        store_metrics_summary: Optional[Mapping[str, Sequence[Mapping[str, Any]]]] = None,
+        store_metrics_summary: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
+        group: str = "00",
     ):
         if span_id is None:
             span_id = self._random_span_id()
         if timestamp is None:
-            timestamp = datetime.now(tz=timezone.utc)
+            timestamp = timezone.now()
 
         payload = {
             "project_id": project_id,
             "span_id": span_id,
             "trace_id": trace_id,
             "duration_ms": int(duration),
-            "exclusive_time_ms": 5,
+            "exclusive_time_ms": exclusive_time,
             "is_segment": False,
-            "received": datetime.now(tz=timezone.utc).timestamp(),
+            "received": timezone.now().timestamp(),
             "start_timestamp_ms": int(timestamp.timestamp() * 1000),
-            "sentry_tags": {"transaction": transaction or "/hello", "op": op or "http"},
+            "sentry_tags": {
+                "transaction": transaction or "/hello",
+                "op": op or "http",
+                "group": group,
+            },
             "retention_days": 90,
         }
 
         if tags:
             payload["tags"] = tags
+        if measurements:
+            payload["measurements"] = {
+                measurement: {"value": value} for measurement, value in measurements.items()
+            }
         if transaction_id:
             payload["event_id"] = transaction_id
         if profile_id:
@@ -1497,7 +1573,7 @@ class BaseSpansTestCase(SnubaTestCase):
             self.store_span(payload)
 
         if "_metrics_summary" in payload:
-            self.store_metric_summary(payload)
+            self.store_metrics_summary(payload)
 
 
 class BaseMetricsTestCase(SnubaTestCase):
@@ -1532,7 +1608,7 @@ class BaseMetricsTestCase(SnubaTestCase):
                 int(
                     session["started"]
                     if isinstance(session["started"], (int, float))
-                    else to_timestamp(session["started"])
+                    else session["started"].timestamp()
                 ),
                 value,
                 use_case_id=UseCaseID.SESSIONS,
@@ -1578,11 +1654,11 @@ class BaseMetricsTestCase(SnubaTestCase):
         project_id: int,
         type: Literal["counter", "set", "distribution", "gauge"],
         name: str,
-        tags: Dict[str, str],
+        tags: dict[str, str],
         timestamp: int,
         value: Any,
         use_case_id: UseCaseID,
-        aggregation_option: Optional[AggregationOption] = None,
+        aggregation_option: AggregationOption | None = None,
     ) -> None:
         mapping_meta = {}
 
@@ -1632,7 +1708,7 @@ class BaseMetricsTestCase(SnubaTestCase):
             value = [value]
         elif type == "gauge":
             # In case we pass either an int or float, we will emit a gauge with all the same values.
-            if not isinstance(value, Dict):
+            if not isinstance(value, dict):
                 value = {
                     "min": value,
                     "max": value,
@@ -1707,7 +1783,7 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
     # This time has been specifically chosen to be 10:00:00 so that all tests will automatically have the data inserted
     # and queried with automatically inferred timestamps (e.g., usage of - 1 second, get_date_range()...) without
     # incurring into problems.
-    MOCK_DATETIME = (django_timezone.now() - timedelta(days=1)).replace(
+    MOCK_DATETIME = (timezone.now() - timedelta(days=1)).replace(
         hour=10, minute=0, second=0, microsecond=0
     )
 
@@ -1721,7 +1797,7 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
         """
         raise NotImplementedError
 
-    def _extract_entity_from_mri(self, mri_string: str) -> Optional[str]:
+    def _extract_entity_from_mri(self, mri_string: str) -> str | None:
         """
         Extracts the entity name from the MRI given a map of shorthands used to represent that entity in the MRI.
         """
@@ -1733,17 +1809,17 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
     def _store_metric(
         self,
         name: str,
-        tags: Dict[str, str],
-        value: int | float | Dict[str, int | float],
+        tags: dict[str, str],
+        value: int | float | dict[str, int | float],
         use_case_id: UseCaseID,
-        type: Optional[str] = None,
-        org_id: Optional[int] = None,
-        project_id: Optional[int] = None,
+        type: str | None = None,
+        org_id: int | None = None,
+        project_id: int | None = None,
         days_before_now: int = 0,
         hours_before_now: int = 0,
         minutes_before_now: int = 0,
         seconds_before_now: int = 0,
-        aggregation_option: Optional[AggregationOption] = None,
+        aggregation_option: AggregationOption | None = None,
     ):
         # We subtract one second in order to account for right non-inclusivity in the query. If we wouldn't do this
         # some data won't be returned (this applies only if we use self.now() in the "end" bound of the query).
@@ -1810,16 +1886,16 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
     def store_performance_metric(
         self,
         name: str,
-        tags: Dict[str, str],
-        value: int | float | Dict[str, int | float],
-        type: Optional[str] = None,
-        org_id: Optional[int] = None,
-        project_id: Optional[int] = None,
+        tags: dict[str, str],
+        value: int | float | dict[str, int | float],
+        type: str | None = None,
+        org_id: int | None = None,
+        project_id: int | None = None,
         days_before_now: int = 0,
         hours_before_now: int = 0,
         minutes_before_now: int = 0,
         seconds_before_now: int = 0,
-        aggregation_option: Optional[AggregationOption] = None,
+        aggregation_option: AggregationOption | None = None,
     ):
         self._store_metric(
             type=type,
@@ -1839,11 +1915,11 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
     def store_release_health_metric(
         self,
         name: str,
-        tags: Dict[str, str],
+        tags: dict[str, str],
         value: int,
-        type: Optional[str] = None,
-        org_id: Optional[int] = None,
-        project_id: Optional[int] = None,
+        type: str | None = None,
+        org_id: int | None = None,
+        project_id: int | None = None,
         days_before_now: int = 0,
         hours_before_now: int = 0,
         minutes_before_now: int = 0,
@@ -1866,16 +1942,16 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
     def store_custom_metric(
         self,
         name: str,
-        tags: Dict[str, str],
-        value: int | float | Dict[str, int | float],
-        type: Optional[str] = None,
-        org_id: Optional[int] = None,
-        project_id: Optional[int] = None,
+        tags: dict[str, str],
+        value: int | float | dict[str, int | float],
+        type: str | None = None,
+        org_id: int | None = None,
+        project_id: int | None = None,
         days_before_now: int = 0,
         hours_before_now: int = 0,
         minutes_before_now: int = 0,
         seconds_before_now: int = 0,
-        aggregation_option: Optional[AggregationOption] = None,
+        aggregation_option: AggregationOption | None = None,
     ):
         self._store_metric(
             type=type,
@@ -1895,17 +1971,17 @@ class BaseMetricsLayerTestCase(BaseMetricsTestCase):
     def build_metrics_query(
         self,
         select: Sequence[MetricField],
-        project_ids: Optional[Sequence[int]] = None,
-        where: Optional[Sequence[Union[BooleanCondition, Condition, MetricConditionField]]] = None,
-        having: Optional[ConditionGroup] = None,
-        groupby: Optional[Sequence[MetricGroupByField]] = None,
-        orderby: Optional[Sequence[MetricOrderByField]] = None,
-        limit: Optional[Limit] = None,
-        offset: Optional[Offset] = None,
+        project_ids: Sequence[int] | None = None,
+        where: Sequence[BooleanCondition | Condition | MetricConditionField] | None = None,
+        having: ConditionGroup | None = None,
+        groupby: Sequence[MetricGroupByField] | None = None,
+        orderby: Sequence[MetricOrderByField] | None = None,
+        limit: Limit | None = None,
+        offset: Offset | None = None,
         include_totals: bool = True,
         include_series: bool = True,
-        before_now: Optional[str] = None,
-        granularity: Optional[str] = None,
+        before_now: str | None = None,
+        granularity: str | None = None,
     ):
         # TODO: fix this method which gets the range after now instead of before now.
         (start, end, granularity_in_seconds) = get_date_range(
@@ -1956,12 +2032,14 @@ class MetricsEnhancedPerformanceTestCase(BaseMetricsLayerTestCase, TestCase):
         "measurements.score.fid": "metrics_distributions",
         "measurements.score.cls": "metrics_distributions",
         "measurements.score.ttfb": "metrics_distributions",
+        "measurements.score.inp": "metrics_distributions",
         "measurements.score.total": "metrics_distributions",
         "measurements.score.weight.lcp": "metrics_distributions",
         "measurements.score.weight.fcp": "metrics_distributions",
         "measurements.score.weight.fid": "metrics_distributions",
         "measurements.score.weight.cls": "metrics_distributions",
         "measurements.score.weight.ttfb": "metrics_distributions",
+        "measurements.score.weight.inp": "metrics_distributions",
         "measurements.app_start_cold": "metrics_distributions",
         "measurements.app_start_warm": "metrics_distributions",
         "spans.http": "metrics_distributions",
@@ -1983,11 +2061,21 @@ class MetricsEnhancedPerformanceTestCase(BaseMetricsLayerTestCase, TestCase):
         "s": EntityKey.MetricsSets.value,
     }
     METRIC_STRINGS = []
-    DEFAULT_METRIC_TIMESTAMP = datetime(2015, 1, 1, 10, 15, 0, tzinfo=timezone.utc)
+    DEFAULT_METRIC_TIMESTAMP = datetime(2015, 1, 1, 10, 15, 0, tzinfo=UTC)
 
     def setUp(self):
         super().setUp()
+        self.min_ago = before_now(minutes=1)
+        self.two_min_ago = before_now(minutes=2)
+        self.login_as(user=self.user)
         self._index_metric_strings()
+
+    def do_request(self, data: dict[str, Any], features: dict[str, bool] | None = None) -> Response:
+        """Set up self.features and self.url in the inheriting classes.
+        You can pass your own features if you do not want to use the default used by the subclass.
+        """
+        with self.feature(features or self.features):
+            return self.client.get(self.url, data=data, format="json")
 
     def _index_metric_strings(self):
         strings = [
@@ -2010,13 +2098,13 @@ class MetricsEnhancedPerformanceTestCase(BaseMetricsLayerTestCase, TestCase):
         self,
         value: list[Any] | Any,
         metric: str = "transaction.duration",
-        internal_metric: Optional[str] = None,
-        entity: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
-        timestamp: Optional[datetime] = None,
-        project: Optional[int] = None,
+        internal_metric: str | None = None,
+        entity: str | None = None,
+        tags: dict[str, str] | None = None,
+        timestamp: datetime | None = None,
+        project: int | None = None,
         use_case_id: UseCaseID = UseCaseID.TRANSACTIONS,
-        aggregation_option: Optional[AggregationOption] = None,
+        aggregation_option: AggregationOption | None = None,
     ) -> None:
         internal_metric = METRICS_MAP[metric] if internal_metric is None else internal_metric
         entity = self.ENTITY_MAP[metric] if entity is None else entity
@@ -2050,12 +2138,14 @@ class MetricsEnhancedPerformanceTestCase(BaseMetricsLayerTestCase, TestCase):
 
     def store_on_demand_metric(
         self,
-        value: int | float,
+        value: int | float | str,
         spec: OnDemandMetricSpec,
-        additional_tags: Optional[Dict[str, str]] = None,
-        timestamp: Optional[datetime] = None,
+        additional_tags: dict[str, str] | None = None,
+        timestamp: datetime | None = None,
     ) -> None:
-        """Convert on-demand metric and store it"""
+        """Convert on-demand metric and store it.
+
+        For sets, value needs to be a unique identifier while for counters it is a count."""
         relay_metric_spec = spec.to_metric_spec(self.project)
         metric_spec_tags = relay_metric_spec["tags"] or [] if relay_metric_spec else []
         tags = {i["key"]: i.get("value") or i.get("field") for i in metric_spec_tags}
@@ -2076,13 +2166,13 @@ class MetricsEnhancedPerformanceTestCase(BaseMetricsLayerTestCase, TestCase):
 
     def store_span_metric(
         self,
-        value: List[int] | int,
+        value: list[int] | int,
         metric: str = "span.self_time",
-        internal_metric: Optional[str] = None,
-        entity: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
-        timestamp: Optional[datetime] = None,
-        project: Optional[int] = None,
+        internal_metric: str | None = None,
+        entity: str | None = None,
+        tags: dict[str, str] | None = None,
+        timestamp: datetime | None = None,
+        project: int | None = None,
         use_case_id: UseCaseID = UseCaseID.SPANS,
     ):
         internal_metric = SPAN_METRICS_MAP[metric] if internal_metric is None else internal_metric
@@ -2173,7 +2263,7 @@ class BaseIncidentsTest(SnubaTestCase):
 
     @cached_property
     def now(self):
-        return django_timezone.now().replace(minute=0, second=0, microsecond=0)
+        return timezone.now().replace(minute=0, second=0, microsecond=0)
 
 
 @pytest.mark.snuba
@@ -2245,7 +2335,7 @@ class ProfilesSnubaTestCase(
             "platform": transaction["platform"],
             "profile_id": profile_id,
             "project_id": project.id,
-            "received": int(datetime.now(tz=timezone.utc).timestamp()),
+            "received": int(timezone.now().timestamp()),
             "retention_days": 90,
             "timestamp": int(timestamp),
             "transaction_name": transaction["transaction"],
@@ -2307,7 +2397,7 @@ class ReplaysSnubaTestCase(TestCase):
 # AcceptanceTestCase and TestCase are mutually exclusive base classses
 class ReplaysAcceptanceTestCase(AcceptanceTestCase, SnubaTestCase):
     def setUp(self):
-        self.now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        self.now = datetime.now(UTC)
         super().setUp()
         self.drop_replays()
         patcher = mock.patch("django.utils.timezone.now", return_value=self.now)
@@ -2565,8 +2655,7 @@ class TestMigrations(TransactionTestCase):
     """
     From https://www.caktusgroup.com/blog/2016/02/02/writing-unit-tests-django-migrations/
 
-    Note that when running these tests locally you will need to set the `--migrations`
-    environmental variable for these to pass.
+    Note that when running these tests locally you will need to use the `--migrations` flag
     """
 
     @property
@@ -2597,10 +2686,6 @@ class TestMigrations(TransactionTestCase):
 
         executor = MigrationExecutor(connection)
         matching_migrations = [m for m in executor.loader.applied_migrations if m[0] == self.app]
-        if not matching_migrations:
-            raise AssertionError(
-                "no migrations detected!\n\ntry running this test with `pytest --migrations ...`"
-            )
         self.current_migration = [max(matching_migrations)]
         old_apps = executor.loader.project_state(migrate_from).apps
 
@@ -2701,7 +2786,7 @@ class ActivityTestCase(TestCase):
         release = Release.objects.create(
             version=name * 40,
             organization_id=self.project.organization_id,
-            date_released=django_timezone.now(),
+            date_released=timezone.now(),
         )
         release.add_project(self.project)
         release.add_project(self.project2)
@@ -2793,10 +2878,17 @@ class SlackActivityNotificationTest(ActivityTestCase):
             issue_link += issue_link_extra_params
         assert (
             blocks[1]["text"]["text"]
-            == f"<{issue_link}|*N+1 Query*>  \ndb - SELECT `books_author`.`id`, `books_author`.`name` FROM `books_author` WHERE `books_author`.`id` = %s LIMIT 21"
+            == f":large_blue_circle: :chart_with_upwards_trend: <{issue_link}|*N+1 Query*>"
         )
         assert (
-            blocks[2]["elements"][0]["text"]
+            blocks[2]["text"]["text"]
+            == "```db - SELECT `books_author`.`id`, `books_author`.`name` FROM `books_author` WHERE `books_author`.`id` = %s LIMIT 21```"
+        )
+        assert (
+            blocks[3]["elements"][0]["text"] == "State: *Ongoing*   First Seen: *10\xa0minutes ago*"
+        )
+        assert (
+            blocks[4]["elements"][0]["text"]
             == f"{project_slug} | production | <http://testserver/settings/account/notifications/{alert_type}/?referrer={referrer}-user&notification_uuid={notification_uuid}|Notification Settings>"
         )
 
@@ -2827,10 +2919,15 @@ class SlackActivityNotificationTest(ActivityTestCase):
             issue_link += issue_link_extra_params
         assert (
             blocks[1]["text"]["text"]
-            == f"<{issue_link}|*{TEST_ISSUE_OCCURRENCE.issue_title}*>  \n{TEST_ISSUE_OCCURRENCE.evidence_display[0].value}"
+            == f":red_circle: <{issue_link}|*{TEST_ISSUE_OCCURRENCE.issue_title}*>"
         )
         assert (
-            blocks[2]["elements"][0]["text"]
+            blocks[2]["text"]["text"]
+            == "```" + TEST_ISSUE_OCCURRENCE.evidence_display[0].value + "```"
+        )
+
+        assert (
+            blocks[-2]["elements"][0]["text"]
             == f"{project_slug} | <http://testserver/settings/account/notifications/{alert_type}/?referrer={referrer}-user&notification_uuid={notification_uuid}|Notification Settings>"
         )
 
@@ -2904,10 +3001,7 @@ class MetricsAPIBaseTestCase(BaseMetricsLayerTestCase, APITestCase):
         self.store_session(self.build_session(**kwargs))
 
 
-class OrganizationMetricMetaIntegrationTestCase(MetricsAPIBaseTestCase):
-    def __indexer_record(self, org_id: int, value: str) -> int:
-        return indexer.record(use_case_id=UseCaseID.SESSIONS, org_id=org_id, string=value)
-
+class OrganizationMetricsIntegrationTestCase(MetricsAPIBaseTestCase):
     def setUp(self):
         super().setUp()
         self.login_as(user=self.user)
@@ -2987,10 +3081,10 @@ class MonitorTestCase(APITestCase):
         }
 
         return MonitorEnvironment.objects.create(
-            monitor=monitor, environment=environment, **monitorenvironment_defaults
+            monitor=monitor, environment_id=environment.id, **monitorenvironment_defaults
         )
 
-    def _create_alert_rule(self, monitor):
+    def _create_issue_alert_rule(self, monitor, exclude_slug_filter=False):
         conditions = [
             {
                 "id": "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition",
@@ -2998,18 +3092,22 @@ class MonitorTestCase(APITestCase):
             {
                 "id": "sentry.rules.conditions.regression_event.RegressionEventCondition",
             },
-            {
-                "id": "sentry.rules.filters.tagged_event.TaggedEventFilter",
-                "key": "monitor.slug",
-                "match": "eq",
-                "value": monitor.slug,
-            },
         ]
+        if not exclude_slug_filter:
+            conditions.append(
+                {
+                    "id": "sentry.rules.filters.tagged_event.TaggedEventFilter",
+                    "key": "monitor.slug",
+                    "match": "eq",
+                    "value": monitor.slug,
+                },
+            )
         actions = [
             {
                 "id": "sentry.mail.actions.NotifyEmailAction",
                 "targetIdentifier": self.user.id,
                 "targetType": "Member",
+                "uuid": str(uuid4()),
             },
         ]
         rule = Creator(
@@ -3040,14 +3138,6 @@ class MonitorIngestTestCase(MonitorTestCase):
     """
 
     @property
-    def endpoint_with_org(self):
-        raise NotImplementedError(f"implement for {type(self).__module__}.{type(self).__name__}")
-
-    @property
-    def dsn_auth_headers(self):
-        return {"HTTP_AUTHORIZATION": f"DSN {self.project_key.dsn_public}"}
-
-    @property
     def token_auth_headers(self):
         return {"HTTP_AUTHORIZATION": f"Bearer {self.token.token}"}
 
@@ -3065,17 +3155,6 @@ class MonitorIngestTestCase(MonitorTestCase):
             slug=sentry_app.slug, organization=self.organization
         )
         self.token = self.create_internal_integration_token(install=app, user=self.user)
-
-    def _get_path_functions(self):
-        # Monitor paths are supported both with an org slug and without.  We test both as long as we support both.
-        # Because removing old urls takes time and consideration of the cost of breaking lingering references, a
-        # decision to permanently remove either path schema is a TODO.
-        return (
-            lambda monitor_slug: reverse(self.endpoint, args=[monitor_slug]),
-            lambda monitor_slug: reverse(
-                self.endpoint_with_org, args=[self.organization.slug, monitor_slug]
-            ),
-        )
 
 
 class IntegratedApiTestCase(BaseTestCase):

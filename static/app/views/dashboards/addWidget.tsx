@@ -2,15 +2,18 @@ import {useCallback, useMemo} from 'react';
 import {useSortable} from '@dnd-kit/sortable';
 import styled from '@emotion/styled';
 
-import {Button, ButtonProps} from 'sentry/components/button';
+import type {ButtonProps} from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import DropdownButton from 'sentry/components/dropdownButton';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
+import FeatureBadge from 'sentry/components/featureBadge';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {IconAdd} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {hasDDMExperimentalFeature, hasDDMFeature} from 'sentry/utils/metrics/features';
+import {hasCustomMetrics} from 'sentry/utils/metrics/features';
 import useOrganization from 'sentry/utils/useOrganization';
 import {DataSet} from 'sentry/views/dashboards/widgetBuilder/utils';
 
@@ -60,7 +63,7 @@ function AddWidget({onAddWidget}: Props) {
         duration: 0.25,
       }}
     >
-      {hasDDMExperimentalFeature(organization) ? (
+      {hasCustomMetrics(organization) ? (
         <InnerWrapper>
           <AddWidgetButton
             onAddWidget={onAddWidget}
@@ -107,8 +110,8 @@ export function AddWidgetButton({onAddWidget, ...buttonProps}: Props & ButtonPro
     [organization, onAddWidget]
   );
 
-  const items: MenuItemProps[] = useMemo(() => {
-    const menuItems = [
+  const items = useMemo(() => {
+    const menuItems: MenuItemProps[] = [
       {
         key: DataSet.EVENTS,
         label: t('Errors and Transactions'),
@@ -131,11 +134,12 @@ export function AddWidgetButton({onAddWidget, ...buttonProps}: Props & ButtonPro
       });
     }
 
-    if (hasDDMFeature(organization)) {
+    if (hasCustomMetrics(organization)) {
       menuItems.push({
         key: DataSet.METRICS,
         label: t('Custom Metrics'),
         onAction: () => handleAction(DataSet.METRICS),
+        trailingItems: <FeatureBadge type="beta" />,
       });
     }
 

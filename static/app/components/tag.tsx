@@ -1,20 +1,23 @@
 import {useCallback} from 'react';
-import {Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {Button} from 'sentry/components/button';
 import ExternalLink from 'sentry/components/links/externalLink';
-import Link, {LinkProps} from 'sentry/components/links/link';
-import {Tooltip, TooltipProps} from 'sentry/components/tooltip';
+import type {LinkProps} from 'sentry/components/links/link';
+import Link from 'sentry/components/links/link';
+import type {TooltipProps} from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconClose, IconOpen} from 'sentry/icons';
-import {SVGIconProps} from 'sentry/icons/svgIcon';
+import type {SVGIconProps} from 'sentry/icons/svgIcon';
 import {IconDefaultsProvider} from 'sentry/icons/useIconDefaults';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import theme, {Color} from 'sentry/utils/theme';
+import type {Color} from 'sentry/utils/theme';
+import theme from 'sentry/utils/theme';
 
-interface Props extends React.HTMLAttributes<HTMLSpanElement> {
+interface TagProps extends React.HTMLAttributes<HTMLSpanElement> {
   /**
    * Makes the tag clickable. Use for external links.
    * If no icon is passed, it defaults to IconOpen (can be removed by passing icon={null})
@@ -67,10 +70,10 @@ function BaseTag({
   children,
   textMaxWidth = 150,
   ...props
-}: Props) {
+}: TagProps) {
   const iconsProps: SVGIconProps = {
     size: 'xs',
-    color: theme.tag[type].iconColor as Color,
+    color: theme.tag[type].color as Color,
   };
 
   const isLink = href !== undefined || to !== undefined;
@@ -160,10 +163,7 @@ const IconWrapper = styled('span')`
 `;
 
 const Text = styled('span')<{maxWidth: number; type: keyof Theme['tag']}>`
-  color: ${p =>
-    ['black', 'white'].includes(p.type)
-      ? p.theme.tag[p.type].iconColor
-      : p.theme.textColor};
+  color: ${p => p.theme.tag[p.type].color};
   max-width: ${p => p.maxWidth}px;
   overflow: hidden;
   white-space: nowrap;
@@ -177,4 +177,4 @@ const DismissButton = styled(Button)`
   border: none;
 `;
 
-export default Tag;
+export {Tag, type TagProps};

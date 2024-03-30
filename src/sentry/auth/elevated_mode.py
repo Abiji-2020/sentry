@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Tuple
+
+from rest_framework.request import Request
 
 
 class InactiveReason(str, Enum):
@@ -23,7 +24,7 @@ class ElevatedMode(ABC):
         pass
 
     @abstractmethod
-    def is_privileged_request(self) -> Tuple[bool, InactiveReason]:
+    def is_privileged_request(self) -> tuple[bool, InactiveReason]:
         pass
 
     @abstractmethod
@@ -45,3 +46,19 @@ class ElevatedMode(ABC):
     @abstractmethod
     def on_response(cls, response) -> None:
         pass
+
+
+# TODO(schew2381): Delete this method after the option is removed
+def has_elevated_mode(request: Request) -> bool:
+    """
+    This is a temporary helper method that checks if the user on the request has
+    the staff option enabled. If so, it checks is_active_staff and otherwise
+    defaults to checking is_active_superuser.
+    """
+    from sentry.auth.staff import has_staff_option, is_active_staff
+    from sentry.auth.superuser import is_active_superuser
+
+    if has_staff_option(request.user):
+        return is_active_staff(request)
+
+    return is_active_superuser(request)

@@ -3,9 +3,9 @@
 import logging
 import os
 import sys
+from collections.abc import MutableSequence
 from contextlib import contextmanager
 from datetime import datetime
-from typing import MutableSequence
 from urllib.parse import urlparse
 
 import pytest
@@ -20,6 +20,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.support.wait import WebDriverWait
 
+from sentry.silo.base import SiloMode
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.utils.retries import TimedRetryPolicy
 
 logger = logging.getLogger("sentry.testutils")
@@ -348,6 +350,7 @@ def pytest_addoption(parser):
     group._addoption(
         "--selenium-driver",
         dest="selenium_driver",
+        default="chrome",
         help="selenium driver (chrome, or firefox)",
     )
     group._addoption(
@@ -437,7 +440,8 @@ def browser(request, live_server):
     # capture an issue where cookie lookup in the frontend failed, but did NOT
     # fail in the acceptance tests because the code worked fine when
     # document.cookie only had one cookie in it.
-    browser.save_cookie("acceptance_test_cookie", "1")
+    with assume_test_silo_mode(SiloMode.CONTROL):
+        browser.save_cookie("acceptance_test_cookie", "1", path="/auth/login/")
 
     if hasattr(request, "cls"):
         request.cls.browser = browser
@@ -533,7 +537,7 @@ def format_log(log):
     timestamp_format = "%Y-%m-%d %H:%M:%S.%f"
     entries = [
         "{0} {1[level]} - {1[message]}".format(
-            datetime.utcfromtimestamp(entry["timestamp"] / 1000.0).strftime(timestamp_format), entry
+            datetime.fromtimestamp(entry["timestamp"] / 1000.0).strftime(timestamp_format), entry
         ).rstrip()
         for entry in log
     ]

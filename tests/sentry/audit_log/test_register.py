@@ -1,9 +1,7 @@
 from sentry import audit_log
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 
 
-@region_silo_test
 class AuditLogEventRegisterTest(TestCase):
     def test_get_api_names(self):
         audit_log_api_name_list = [
@@ -15,6 +13,10 @@ class AuditLogEventRegisterTest(TestCase):
             "member.join-team",
             "member.leave-team",
             "member.pending",
+            "metric.block",
+            "metric.tags.block",
+            "metric.tags.unblock",
+            "metric.unblock",
             "org.create",
             "org.edit",
             "org.remove",

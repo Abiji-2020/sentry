@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Mapping, Optional, Tuple
+from collections.abc import Mapping
+from typing import Any
 from uuid import UUID
 
 import jsonschema
 import sentry_sdk
 from django.utils import timezone
-from sentry_sdk.tracing import NoOpSpan, Transaction
+from sentry_sdk.tracing import NoOpSpan, Span, Transaction
 
 from sentry import nodestore
 from sentry.event_manager import GroupInfo
@@ -34,7 +35,7 @@ class EventLookupError(Exception):
 
 
 def save_event_from_occurrence(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     **kwargs: Any,
 ) -> Event:
     from sentry.event_manager import EventManager
@@ -51,7 +52,7 @@ def save_event_from_occurrence(
 
 
 def lookup_event(project_id: int, event_id: str) -> Event:
-    data = nodestore.get(Event.generate_node_id(project_id, event_id))
+    data = nodestore.backend.get(Event.generate_node_id(project_id, event_id))
     if data is None:
         raise EventLookupError(f"Failed to lookup event({event_id}) for project_id({project_id})")
     event = Event(event_id=event_id, project_id=project_id)
@@ -60,8 +61,8 @@ def lookup_event(project_id: int, event_id: str) -> Event:
 
 
 def process_event_and_issue_occurrence(
-    occurrence_data: IssueOccurrenceData, event_data: Dict[str, Any]
-) -> Tuple[IssueOccurrence, Optional[GroupInfo]]:
+    occurrence_data: IssueOccurrenceData, event_data: dict[str, Any]
+) -> tuple[IssueOccurrence, GroupInfo | None]:
     if occurrence_data["event_id"] != event_data["event_id"]:
         raise ValueError(
             f"event_id in occurrence({occurrence_data['event_id']}) is different from event_id in event_data({event_data['event_id']})"
@@ -77,7 +78,7 @@ def process_event_and_issue_occurrence(
 
 def lookup_event_and_process_issue_occurrence(
     occurrence_data: IssueOccurrenceData,
-) -> Tuple[IssueOccurrence, Optional[GroupInfo]]:
+) -> tuple[IssueOccurrence, GroupInfo | None]:
     project_id = occurrence_data["project_id"]
     event_id = occurrence_data["event_id"]
     try:
@@ -123,6 +124,12 @@ def _get_kwargs(payload: Mapping[str, Any]) -> Mapping[str, Any]:
 
             if payload.get("culprit"):
                 occurrence_data["culprit"] = payload["culprit"]
+
+            if payload.get("initial_issue_priority") is not None:
+                occurrence_data["initial_issue_priority"] = payload["initial_issue_priority"]
+            else:
+                group_type = get_group_type_by_type_id(occurrence_data["type"])
+                occurrence_data["initial_issue_priority"] = group_type.default_priority
 
             if "event" in payload:
                 event_payload = payload["event"]
@@ -207,15 +214,16 @@ def _get_kwargs(payload: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 def process_occurrence_message(
-    message: Mapping[str, Any], txn: Transaction | NoOpSpan
-) -> Tuple[IssueOccurrence, Optional[GroupInfo]]:
+    message: Mapping[str, Any], txn: Transaction | NoOpSpan | Span
+) -> tuple[IssueOccurrence, GroupInfo | None] | None:
     with metrics.timer("occurrence_consumer._process_message._get_kwargs"):
         kwargs = _get_kwargs(message)
     occurrence_data = kwargs["occurrence_data"]
+    metric_tags = {"occurrence_type": occurrence_data["type"]}
     metrics.incr(
         "occurrence_ingest.messages",
         sample_rate=1.0,
-        tags={"occurrence_type": occurrence_data["type"]},
+        tags=metric_tags,
     )
     txn.set_tag("occurrence_type", occurrence_data["type"])
 
@@ -232,7 +240,7 @@ def process_occurrence_message(
         metrics.incr(
             "occurrence_ingest.dropped_feature_disabled",
             sample_rate=1.0,
-            tags={"occurrence_type": occurrence_data["type"]},
+            tags=metric_tags,
         )
         txn.set_tag("result", "dropped_feature_disabled")
         return None
@@ -240,7 +248,8 @@ def process_occurrence_message(
     if "event_data" in kwargs:
         txn.set_tag("result", "success")
         with metrics.timer(
-            "occurrence_consumer._process_message.process_event_and_issue_occurrence"
+            "occurrence_consumer._process_message.process_event_and_issue_occurrence",
+            tags=metric_tags,
         ):
             return process_event_and_issue_occurrence(
                 kwargs["occurrence_data"], kwargs["event_data"]
@@ -248,14 +257,15 @@ def process_occurrence_message(
     else:
         txn.set_tag("result", "success")
         with metrics.timer(
-            "occurrence_consumer._process_message.lookup_event_and_process_issue_occurrence"
+            "occurrence_consumer._process_message.lookup_event_and_process_issue_occurrence",
+            tags=metric_tags,
         ):
             return lookup_event_and_process_issue_occurrence(kwargs["occurrence_data"])
 
 
 def _process_message(
     message: Mapping[str, Any]
-) -> Optional[Tuple[IssueOccurrence, Optional[GroupInfo]]]:
+) -> tuple[IssueOccurrence | None, GroupInfo | None] | None:
     """
     :raises InvalidEventPayloadError: when the message is invalid
     :raises EventLookupError: when the provided event_id in the message couldn't be found.
@@ -270,6 +280,9 @@ def _process_message(
             payload_type = message.get("payload_type", PayloadType.OCCURRENCE.value)
             if payload_type == PayloadType.STATUS_CHANGE.value:
                 group = process_status_change_message(message, txn)
+                if not group:
+                    return None
+
                 return None, GroupInfo(group=group, is_new=False, is_regression=False)
             elif payload_type == PayloadType.OCCURRENCE.value:
                 return process_occurrence_message(message, txn)
@@ -282,4 +295,4 @@ def _process_message(
         except (ValueError, KeyError) as e:
             txn.set_tag("result", "error")
             raise InvalidEventPayloadError(e)
-    return
+    return None

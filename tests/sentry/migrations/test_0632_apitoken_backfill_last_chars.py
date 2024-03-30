@@ -3,8 +3,10 @@ from django.db import router
 from sentry.silo import unguarded_write
 from sentry.testutils.cases import TestMigrations
 from sentry.testutils.helpers import override_options
+from sentry.testutils.silo import no_silo_test
 
 
+@no_silo_test
 class LastCharsApiTokenMigrationTest(TestMigrations):
     migrate_from = "0631_add_priority_columns_to_groupedmessage"
     migrate_to = "0632_apitoken_backfill_last_chars"
@@ -29,9 +31,6 @@ class LastCharsApiTokenMigrationTest(TestMigrations):
         assert self.api_token.token_last_characters is None
 
     def test(self):
-        from sentry.models.apitoken import ApiToken
-
-        api_tokens = ApiToken.objects.all()
-        for api_token in api_tokens:
-            assert api_token.name is None
-            assert api_token.token_last_characters == api_token.token[-4:]
+        self.api_token.refresh_from_db()
+        assert self.api_token.name is None
+        assert self.api_token.token_last_characters == self.api_token.token[-4:]

@@ -1,23 +1,22 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum, unique
-from typing import List, Optional, Sequence, Set
-
-import sentry_sdk
-from typing_extensions import TypedDict
+from typing import TypedDict
 
 from sentry import options
 from sentry.utils.sdk_crashes.path_replacer import (
     FixedPathReplacer,
     KeepAfterPatternMatchPathReplacer,
+    KeepFieldPathReplacer,
     PathReplacer,
 )
 
 
 @dataclass
 class SDKFrameConfig:
-    function_patterns: Set[str]
+    function_patterns: set[str]
 
-    filename_patterns: Set[str]
+    path_patterns: set[str]
 
     path_replacer: PathReplacer
 
@@ -26,6 +25,7 @@ class SDKFrameConfig:
 class SdkName(Enum):
     Cocoa = "cocoa"
     ReactNative = "react-native"
+    Java = "java"
 
 
 @dataclass
@@ -38,28 +38,28 @@ class SDKCrashDetectionConfig:
     project_id: int
     """The percentage of events to sample. 0.0 = 0%, 0.5 = 50% 1.0 = 100%."""
     sample_rate: float
-    """The organization allowlist to detect crashes for. If None, all organizations are allowed."""
-    organization_allowlist: Optional[list[int]]
+    """The organization allowlist to detect crashes for. If empty, all organizations are allowed. Use the sample_rate to disable the SDK crash detection for all organizations."""
+    organization_allowlist: list[int]
     """The SDK names to detect crashes for. For example, ["sentry.cocoa", "sentry.cocoa.react-native"]."""
     sdk_names: Sequence[str]
     """The minimum SDK version to detect crashes for. For example, "8.2.0"."""
     min_sdk_version: str
     """The system library path patterns to detect system frames. For example, `System/Library/*` """
-    system_library_path_patterns: Set[str]
+    system_library_path_patterns: set[str]
     """The configuration for detecting SDK frames."""
     sdk_frame_config: SDKFrameConfig
     """The functions to ignore when detecting SDK crashes. For example, `**SentrySDK crash**`"""
-    sdk_crash_ignore_functions_matchers: Set[str]
+    sdk_crash_ignore_functions_matchers: set[str]
 
 
 class SDKCrashDetectionOptions(TypedDict):
     project_id: int
     sample_rate: float
-    organization_allowlist: Optional[list[int]]
+    organization_allowlist: list[int]
 
 
 def build_sdk_crash_detection_configs() -> Sequence[SDKCrashDetectionConfig]:
-    configs: List[SDKCrashDetectionConfig] = []
+    configs: list[SDKCrashDetectionConfig] = []
 
     cocoa_options = _get_options(sdk_name=SdkName.Cocoa, has_organization_allowlist=False)
 
@@ -92,7 +92,7 @@ def build_sdk_crash_detection_configs() -> Sequence[SDKCrashDetectionConfig]:
                     r"*(Sentry*)*",  # Objective-C class extension categories
                     r"SentryMX*",  # MetricKit Swift classes
                 },
-                filename_patterns={"Sentry**"},
+                path_patterns={"Sentry**"},
                 path_replacer=FixedPathReplacer(path="Sentry.framework"),
             ),
             # [SentrySDK crash] is a testing function causing a crash.
@@ -122,9 +122,27 @@ def build_sdk_crash_detection_configs() -> Sequence[SDKCrashDetectionConfig]:
             },
             sdk_frame_config=SDKFrameConfig(
                 function_patterns=set(),
-                filename_patterns={r"**/sentry-react-native/dist/**"},
+                path_patterns={
+                    # Development path
+                    r"**/sentry-react-native/dist/**",
+                    # Production paths taken from https://github.com/getsentry/sentry-react-native/blob/037d5fa2f38b02eaf4ca92fda569e0acfd6c3ebe/package.json#L68-L77
+                    r"**/@sentry/react-native/**",
+                    r"**/@sentry/browser/**",
+                    r"**/@sentry/cli/**",
+                    r"**/@sentry/core/**",
+                    r"**/@sentry/hub/**",
+                    r"**/@sentry/integrations/**",
+                    r"**/@sentry/react/**",
+                    r"**/@sentry/types/**",
+                    r"**/@sentry/utils/**",
+                },
                 path_replacer=KeepAfterPatternMatchPathReplacer(
-                    patterns={r"\/sentry-react-native\/.*", r"\/@sentry.*"},
+                    patterns={
+                        r"\/sentry-react-native\/.*",
+                        # We don't add the first / here because module isn't prefixed with /.
+                        # We don't need to specify all production paths because the path replacer only runs for SDK frames.
+                        r"@sentry\/*",
+                    },
                     fallback_path="sentry-react-native",
                 ),
             ),
@@ -132,24 +150,73 @@ def build_sdk_crash_detection_configs() -> Sequence[SDKCrashDetectionConfig]:
         )
         configs.append(react_native_config)
 
+    java_options = _get_options(sdk_name=SdkName.Java, has_organization_allowlist=True)
+    if java_options:
+        java_config = SDKCrashDetectionConfig(
+            sdk_name=SdkName.Java,
+            project_id=java_options["project_id"],
+            sample_rate=java_options["sample_rate"],
+            organization_allowlist=java_options["organization_allowlist"],
+            sdk_names=[
+                "sentry.java.android",
+                "sentry.java.android.capacitor",
+                "sentry.java.android.dotnet",
+                "sentry.java.android.flutter",
+                "sentry.java.android.kmp",
+                "sentry.java.android.react-native",
+                "sentry.java.android.timber",
+                "sentry.java.android.unity",
+                "sentry.java.android.unreal",
+                "sentry.java.jul",
+                "sentry.java.kmp",
+                "sentry.java.log4j2",
+                "sentry.java.logback",
+                "sentry.java.opentelemetry.agent",
+                "sentry.java.spring",
+                "sentry.java.spring-boot",
+                "sentry.java.spring-boot.jakarta",
+                "sentry.java.spring.jakarta",
+            ],
+            # The sentry-java SDK sends SDK frames for uncaught exceptions since 7.0.0, which is required for detecting SDK crashes.
+            # 7.0.0 was released in Nov 2023, see https://github.com/getsentry/sentry-java/releases/tag/7.0.0
+            min_sdk_version="7.0.0",
+            system_library_path_patterns={
+                r"java.**",
+                r"javax.**",
+                r"android.**",
+                r"androidx.**",
+                r"com.android.internal.**",
+                r"kotlin.**",
+                r"dalvik.**",
+            },
+            sdk_frame_config=SDKFrameConfig(
+                function_patterns=set(),
+                path_patterns={
+                    r"io.sentry.**",
+                },
+                path_replacer=KeepFieldPathReplacer(fields={"module", "filename"}),
+            ),
+            sdk_crash_ignore_functions_matchers=set(),
+        )
+        configs.append(java_config)
+
     return configs
 
 
 def _get_options(
     sdk_name: SdkName, has_organization_allowlist: bool
-) -> Optional[SDKCrashDetectionOptions]:
+) -> SDKCrashDetectionOptions | None:
     options_prefix = f"issues.sdk_crash_detection.{sdk_name.value}"
 
     project_id = options.get(f"{options_prefix}.project_id")
     if not project_id:
-        sentry_sdk.capture_message(f"{sdk_name.value} project_id is not set.")
         return None
 
     sample_rate = options.get(f"{options_prefix}.sample_rate")
     if not sample_rate:
         return None
 
-    organization_allowlist: Optional[list[int]] = None
+    organization_allowlist: list[int] = []
     if has_organization_allowlist:
         organization_allowlist = options.get(f"{options_prefix}.organization_allowlist")
 

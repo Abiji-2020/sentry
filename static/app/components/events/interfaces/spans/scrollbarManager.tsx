@@ -8,11 +8,12 @@ import {rectOfContent} from 'sentry/components/performance/waterfall/utils';
 import getDisplayName from 'sentry/utils/getDisplayName';
 import clamp from 'sentry/utils/number/clamp';
 import toPercent from 'sentry/utils/number/toPercent';
-import {setBodyUserSelect, UserSelectValues} from 'sentry/utils/userselect';
+import type {UserSelectValues} from 'sentry/utils/userselect';
+import {setBodyUserSelect} from 'sentry/utils/userselect';
 
-import {DragManagerChildrenProps} from './dragManager';
-import {NewTraceDetailsSpanBar} from './newTraceDetailsSpanBar';
-import {SpanBar} from './spanBar';
+import type {DragManagerChildrenProps} from './dragManager';
+import type {NewTraceDetailsSpanBar} from './newTraceDetailsSpanBar';
+import type {SpanBar} from './spanBar';
 
 export type ScrollbarManagerChildrenProps = {
   addContentSpanBarRef: (instance: HTMLDivElement | null) => void;
@@ -89,7 +90,6 @@ export class Provider extends Component<Props, State> {
   componentDidMount() {
     // React will guarantee that refs are set before componentDidMount() is called;
     // but only for DOM elements that actually got rendered
-
     this.initializeScrollState();
   }
 

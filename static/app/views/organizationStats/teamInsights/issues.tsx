@@ -1,5 +1,5 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
+import type {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import * as Layout from 'sentry/components/layouts/thirds';
@@ -8,7 +8,7 @@ import LoadingIndicator from 'sentry/components/loadingIndicator';
 import NoProjectMessage from 'sentry/components/noProjectMessage';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {TeamWithProjects} from 'sentry/types';
+import type {TeamWithProjects} from 'sentry/types';
 import localStorage from 'sentry/utils/localStorage';
 import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
 import useOrganization from 'sentry/utils/useOrganization';
@@ -108,7 +108,7 @@ function TeamStatsIssues({location, router}: Props) {
                 period={period}
                 start={start?.toString()}
                 end={end?.toString()}
-                statuses={['new', 'regressed', 'unarchived']}
+                statuses={['new', 'regressed', 'escalating']}
               />
             </DescriptionCard>
 
@@ -126,7 +126,13 @@ function TeamStatsIssues({location, router}: Props) {
                 period={period}
                 start={start?.toString()}
                 end={end?.toString()}
-                statuses={['resolved', 'archived', 'deleted']}
+                statuses={[
+                  'resolved',
+                  'deleted',
+                  'archived_until_escalating',
+                  'archived_forever',
+                  'archived_until_condition_met',
+                ]}
               />
             </DescriptionCard>
 

@@ -1,12 +1,12 @@
 import {Component} from 'react';
-import {RouteComponentProps} from 'react-router';
+import type {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
-import {LocationDescriptorObject} from 'history';
+import type {LocationDescriptorObject} from 'history';
 import omit from 'lodash/omit';
 import pick from 'lodash/pick';
 import moment from 'moment';
 
-import {DateTimeObject} from 'sentry/components/charts/utils';
+import type {DateTimeObject} from 'sentry/components/charts/utils';
 import {CompactSelect} from 'sentry/components/compactSelect';
 import ErrorBoundary from 'sentry/components/errorBoundary';
 import HookOrDefault from 'sentry/components/hookOrDefault';
@@ -18,7 +18,8 @@ import PageFiltersContainer from 'sentry/components/organizations/pageFilters/co
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
-import {ChangeData, TimeRangeSelector} from 'sentry/components/timeRangeSelector';
+import type {ChangeData} from 'sentry/components/timeRangeSelector';
+import {TimeRangeSelector} from 'sentry/components/timeRangeSelector';
 import {
   DATA_CATEGORY_INFO,
   DEFAULT_RELATIVE_PERIODS,
@@ -27,7 +28,7 @@ import {
 import {ALL_ACCESS_PROJECTS} from 'sentry/constants/pageFilters';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   DataCategoryInfo,
   DateString,
   Organization,
@@ -38,7 +39,8 @@ import withOrganization from 'sentry/utils/withOrganization';
 import withPageFilters from 'sentry/utils/withPageFilters';
 import HeaderTabs from 'sentry/views/organizationStats/header';
 
-import {CHART_OPTIONS_DATACATEGORY, ChartDataTransform} from './usageChart';
+import type {ChartDataTransform} from './usageChart';
+import {CHART_OPTIONS_DATACATEGORY} from './usageChart';
 import UsageStatsOrg from './usageStatsOrg';
 import UsageStatsProjects from './usageStatsProjects';
 
@@ -256,12 +258,12 @@ export class OrganizationStats extends Component<OrganizationStatsProps> {
       return null;
     }
 
-    const hasReplay = organization.features.includes('session-replay');
-    const options = hasReplay
-      ? CHART_OPTIONS_DATACATEGORY
-      : CHART_OPTIONS_DATACATEGORY.filter(
-          opt => opt.value !== DATA_CATEGORY_INFO.replay.plural
-        );
+    const options = CHART_OPTIONS_DATACATEGORY.filter(opt => {
+      if (opt.value === DATA_CATEGORY_INFO.replay.plural) {
+        return organization.features.includes('session-replay');
+      }
+      return true;
+    });
 
     return (
       <PageControl>
@@ -311,12 +313,12 @@ export class OrganizationStats extends Component<OrganizationStatsProps> {
 
     const {start, end, period, utc} = this.dataDatetime;
 
-    const hasReplay = organization.features.includes('session-replay');
-    const options = hasReplay
-      ? CHART_OPTIONS_DATACATEGORY
-      : CHART_OPTIONS_DATACATEGORY.filter(
-          opt => opt.value !== DATA_CATEGORY_INFO.replay.plural
-        );
+    const options = CHART_OPTIONS_DATACATEGORY.filter(opt => {
+      if (opt.value === DATA_CATEGORY_INFO.replay.plural) {
+        return organization.features.includes('session-replay');
+      }
+      return true;
+    });
 
     return (
       <SelectorGrid>
@@ -345,7 +347,7 @@ export class OrganizationStats extends Component<OrganizationStatsProps> {
    * This method is replaced by the hook "component:enhanced-org-stats"
    */
   renderUsageStatsOrg() {
-    const {organization, router} = this.props;
+    const {organization, router, location, params, routes} = this.props;
     return (
       <UsageStatsOrg
         isSingleProject={this.isSingleProject}
@@ -357,6 +359,9 @@ export class OrganizationStats extends Component<OrganizationStatsProps> {
         chartTransform={this.chartTransform}
         handleChangeState={this.setStateOnUrl}
         router={router}
+        location={location}
+        params={params}
+        routes={routes}
       />
     );
   }

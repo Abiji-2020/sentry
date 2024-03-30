@@ -2,7 +2,7 @@ import moment from 'moment';
 
 import {parseStatsPeriod} from 'sentry/components/organizations/pageFilters/parse';
 import ConfigStore from 'sentry/stores/configStore';
-import {DateString} from 'sentry/types';
+import type {DateString} from 'sentry/types';
 
 // TODO(billy): Move to TimeRangeSelector specific utils
 export const DEFAULT_DAY_START_TIME = '00:00:00';
@@ -218,10 +218,10 @@ export function statsPeriodToDays(
   start?: DateString,
   end?: DateString
 ) {
-  if (statsPeriod && statsPeriod.endsWith('d')) {
+  if (statsPeriod?.endsWith('d')) {
     return parseInt(statsPeriod.slice(0, -1), 10);
   }
-  if (statsPeriod && statsPeriod.endsWith('h')) {
+  if (statsPeriod?.endsWith('h')) {
     return parseInt(statsPeriod.slice(0, -1), 10) / 24;
   }
   if (start && end) {

@@ -3,7 +3,7 @@ import {Fragment} from 'react';
 import {Alert} from 'sentry/components/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {t, tct, tn} from 'sentry/locale';
-import {IgnoredStatusDetails} from 'sentry/types';
+import type {IgnoredStatusDetails} from 'sentry/types';
 import {capitalize} from 'sentry/utils/string/capitalize';
 
 import ExtraDescription from './extraDescription';
@@ -14,11 +14,12 @@ export const BULK_LIMIT_STR = BULK_LIMIT.toLocaleString();
 export enum ConfirmAction {
   RESOLVE = 'resolve',
   UNRESOLVE = 'unresolve',
-  IGNORE = 'ignore',
+  ARCHIVE = 'archive',
   BOOKMARK = 'bookmark',
   UNBOOKMARK = 'unbookmark',
   MERGE = 'merge',
   DELETE = 'delete',
+  SET_PRIORITY = 'reprioritize',
 }
 
 function getBulkConfirmMessage(action: string, queryCount: number) {
@@ -79,16 +80,15 @@ export function getConfirm({
     canBeUndone: boolean;
     append?: string;
   }) {
-    const actionText = action === ConfirmAction.IGNORE && t('archive');
     const question = allInQuerySelected
-      ? getBulkConfirmMessage(`${actionText}${append}`, queryCount)
+      ? getBulkConfirmMessage(`${action}${append}`, queryCount)
       : tn(
           // Use sprintf argument swapping since the number value must come
           // first. See https://github.com/alexei/sprintf.js#argument-swapping
           `Are you sure you want to %2$s this %s issue%3$s?`,
           `Are you sure you want to %2$s these %s issues%3$s?`,
           numIssues,
-          actionText,
+          action,
           append
         );
 

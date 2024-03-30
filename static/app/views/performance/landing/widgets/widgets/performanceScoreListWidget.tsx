@@ -1,4 +1,5 @@
-import {Fragment, ReactElement, useState} from 'react';
+import type {ReactElement} from 'react';
+import {Fragment, useState} from 'react';
 import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
@@ -16,6 +17,10 @@ import {
   PerformanceBadge,
 } from 'sentry/views/performance/browser/webVitals/components/performanceBadge';
 import {formatTimeSeriesResultsToChartData} from 'sentry/views/performance/browser/webVitals/components/performanceScoreBreakdownChart';
+import {
+  ORDER,
+  ORDER_WITH_INP_WITHOUT_FID,
+} from 'sentry/views/performance/browser/webVitals/performanceScoreChart';
 import {calculateOpportunity} from 'sentry/views/performance/browser/webVitals/utils/calculateOpportunity';
 import {calculatePerformanceScoreFromTableDataRow} from 'sentry/views/performance/browser/webVitals/utils/queries/rawWebVitalsQueries/calculatePerformanceScore';
 import {useProjectRawWebVitalsQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/rawWebVitalsQueries/useProjectRawWebVitalsQuery';
@@ -23,9 +28,10 @@ import {calculatePerformanceScoreFromStoredTableDataRow} from 'sentry/views/perf
 import {useProjectWebVitalsScoresQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/storedScoreQueries/useProjectWebVitalsScoresQuery';
 import {useProjectWebVitalsTimeseriesQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/useProjectWebVitalsTimeseriesQuery';
 import {useTransactionWebVitalsQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/useTransactionWebVitalsQuery';
-import {RowWithScoreAndOpportunity} from 'sentry/views/performance/browser/webVitals/utils/types';
+import type {RowWithScoreAndOpportunity} from 'sentry/views/performance/browser/webVitals/utils/types';
+import {useReplaceFidWithInpSetting} from 'sentry/views/performance/browser/webVitals/utils/useReplaceFidWithInpSetting';
 import {useStoredScoresSetting} from 'sentry/views/performance/browser/webVitals/utils/useStoredScoresSetting';
-import Chart from 'sentry/views/starfish/components/chart';
+import Chart, {ChartType} from 'sentry/views/starfish/components/chart';
 
 import {GenericPerformanceWidget} from '../components/performanceWidget';
 import {
@@ -34,9 +40,9 @@ import {
   Subtitle,
   WidgetEmptyStateWarning,
 } from '../components/selectableList';
-import {transformDiscoverToList} from '../transforms/transformDiscoverToList';
-import {transformEventsRequestToStackedArea} from '../transforms/transformEventsToStackedBars';
-import {PerformanceWidgetProps, WidgetDataResult} from '../types';
+import type {transformDiscoverToList} from '../transforms/transformDiscoverToList';
+import type {transformEventsRequestToStackedArea} from '../transforms/transformEventsToStackedBars';
+import type {PerformanceWidgetProps, WidgetDataResult} from '../types';
 
 type DataType = {
   chart: WidgetDataResult & ReturnType<typeof transformEventsRequestToStackedArea>;
@@ -49,6 +55,7 @@ export function PerformanceScoreListWidget(props: PerformanceWidgetProps) {
   const {ContainerActions, organization, InteractiveTitle} = props;
   const theme = useTheme();
   const shouldUseStoredScores = useStoredScoresSetting();
+  const shouldReplaceFidWithInp = useReplaceFidWithInpSetting();
 
   const {data: projectData, isLoading: isProjectWebVitalDataLoading} =
     useProjectRawWebVitalsQuery();
@@ -70,6 +77,8 @@ export function PerformanceScoreListWidget(props: PerformanceWidgetProps) {
   const assembleAccordionItems = provided =>
     getHeaders(provided).map(header => ({header, content: getAreaChart(provided)}));
 
+  const order = shouldReplaceFidWithInp ? ORDER_WITH_INP_WITHOUT_FID : ORDER;
+
   const getAreaChart = _ =>
     function () {
       const segmentColors = theme.charts.getColorPalette(3);
@@ -80,8 +89,10 @@ export function PerformanceScoreListWidget(props: PerformanceWidgetProps) {
           data={formatTimeSeriesResultsToChartData(
             timeseriesData,
             segmentColors,
-            !shouldUseStoredScores
+            !shouldUseStoredScores,
+            order
           )}
+          type={ChartType.AREA}
           disableXAxis
           loading={false}
           grid={{
@@ -111,13 +122,13 @@ export function PerformanceScoreListWidget(props: PerformanceWidgetProps) {
                 scoreCount
               : 0
             : count !== undefined
-            ? calculateOpportunity(
-                projectScore.totalScore ?? 0,
-                count,
-                listItem.totalScore,
-                listItem['count()']
-              )
-            : 0;
+              ? calculateOpportunity(
+                  projectScore.totalScore ?? 0,
+                  count,
+                  listItem.totalScore,
+                  listItem['count()']
+                )
+              : 0;
           return (
             <Fragment>
               <GrowLink

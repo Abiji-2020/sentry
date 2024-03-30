@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping, Sequence
 from operator import attrgetter
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any
 
 from django.urls import reverse
 
@@ -101,7 +102,7 @@ class GitHubIssueBasic(IssueBasicMixin):
     @all_silo_function
     def get_create_issue_config(
         self, group: Group | None, user: User, **kwargs: Any
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         We use the `group` to get three things: organization_slug, project
         defaults, and default title and description. In the case where we're
@@ -196,7 +197,7 @@ class GitHubIssueBasic(IssueBasicMixin):
             "repo": repo,
         }
 
-    def get_link_issue_config(self, group: Group, **kwargs: Any) -> List[Dict[str, Any]]:
+    def get_link_issue_config(self, group: Group, **kwargs: Any) -> list[dict[str, Any]]:
         params = kwargs.pop("params", {})
         default_repo, repo_choices = self.get_repository_choices(group, params, **kwargs)
 
@@ -204,6 +205,19 @@ class GitHubIssueBasic(IssueBasicMixin):
         autocomplete_url = reverse(
             "sentry-integration-github-search", args=[org.slug, self.model.id]
         )
+
+        def get_linked_issue_comment_prefix(group: Group) -> str:
+            if group.issue_category == GroupCategory.FEEDBACK:
+                return "Sentry Feedback"
+            else:
+                return "Sentry Issue"
+
+        def get_default_comment(group: Group) -> str:
+            prefix = get_linked_issue_comment_prefix(group)
+            url = group.get_absolute_url(params={"referrer": "github_integration"})
+            issue_short_id = group.qualified_short_id
+
+            return f"{prefix}: [{issue_short_id}]({absolute_uri(url)})"
 
         return [
             {
@@ -228,12 +242,7 @@ class GitHubIssueBasic(IssueBasicMixin):
             {
                 "name": "comment",
                 "label": "Comment",
-                "default": "Sentry issue: [{issue_id}]({url})".format(
-                    url=absolute_uri(
-                        group.get_absolute_url(params={"referrer": "github_integration"})
-                    ),
-                    issue_id=group.qualified_short_id,
-                ),
+                "default": get_default_comment(group),
                 "type": "textarea",
                 "required": False,
                 "autosize": True,

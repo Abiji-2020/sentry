@@ -1,8 +1,8 @@
-import {CheckInStatus} from 'sentry/views/monitors/types';
+import type {CheckInStatus} from 'sentry/views/monitors/types';
 
 export type TimeWindow = '1h' | '24h' | '7d' | '30d';
 
-export interface TimeWindowOptions {
+export interface TimeWindowConfig {
   /**
    * The time format used for the cursor label and job tick tooltip
    */

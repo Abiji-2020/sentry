@@ -1,16 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Generic, NamedTuple, Type, TypeVar
+from typing import Generic, NamedTuple, TypeVar
 
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 
 # Django apps we take care to never import or export from.
 EXCLUDED_APPS = frozenset(("auth", "contenttypes", "fixtures"))
-
-UTC_0 = timezone(timedelta(hours=0))
 
 
 class Printer:
@@ -47,7 +45,7 @@ class DatetimeSafeDjangoJSONEncoder(DjangoJSONEncoder):
 
     def default(self, obj):
         if isinstance(obj, datetime):
-            return obj.astimezone(UTC_0).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+            return obj.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         return super().default(obj)
 
 
@@ -68,11 +66,11 @@ class Filter(Generic[T]):
     allowlist based filtration: models of the given type whose specified field matches ANY of the
     supplied values will be allowed through."""
 
-    model: Type[models.base.Model]
+    model: type[models.base.Model]
     field: str
     values: set[T]
 
-    def __init__(self, model: Type[models.base.Model], field: str, values: set[T] | None = None):
+    def __init__(self, model: type[models.base.Model], field: str, values: set[T] | None = None):
         self.model = model
         self.field = field
         self.values = values if values is not None else set()

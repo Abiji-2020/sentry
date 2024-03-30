@@ -1,16 +1,15 @@
 import {getInterval} from 'sentry/components/charts/utils';
-import {Tag} from 'sentry/types';
-import {SeriesDataUnit} from 'sentry/types/echarts';
-import EventView, {MetaType} from 'sentry/utils/discover/eventView';
-import {
-  DiscoverQueryProps,
-  useGenericDiscoverQuery,
-} from 'sentry/utils/discover/genericDiscoverQuery';
+import type {Tag} from 'sentry/types';
+import type {SeriesDataUnit} from 'sentry/types/echarts';
+import type {MetaType} from 'sentry/utils/discover/eventView';
+import EventView from 'sentry/utils/discover/eventView';
+import type {DiscoverQueryProps} from 'sentry/utils/discover/genericDiscoverQuery';
+import {useGenericDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
-import {WebVitalsScoreBreakdown} from 'sentry/views/performance/browser/webVitals/utils/queries/rawWebVitalsQueries/useProjectRawWebVitalsTimeseriesQuery';
+import type {WebVitalsScoreBreakdown} from 'sentry/views/performance/browser/webVitals/utils/queries/rawWebVitalsQueries/useProjectRawWebVitalsTimeseriesQuery';
 
 type Props = {
   enabled?: boolean;
@@ -23,6 +22,7 @@ export type UnweightedWebVitalsScoreBreakdown = {
   unweightedCls: SeriesDataUnit[];
   unweightedFcp: SeriesDataUnit[];
   unweightedFid: SeriesDataUnit[];
+  unweightedInp: SeriesDataUnit[];
   unweightedLcp: SeriesDataUnit[];
   unweightedTtfb: SeriesDataUnit[];
 };
@@ -42,17 +42,21 @@ export const useProjectWebVitalsScoresTimeseriesQuery = ({
         'weighted_performance_score(measurements.score.fcp)',
         'weighted_performance_score(measurements.score.cls)',
         'weighted_performance_score(measurements.score.fid)',
+        'weighted_performance_score(measurements.score.inp)',
         'weighted_performance_score(measurements.score.ttfb)',
         'performance_score(measurements.score.lcp)',
         'performance_score(measurements.score.fcp)',
         'performance_score(measurements.score.cls)',
         'performance_score(measurements.score.fid)',
+        'performance_score(measurements.score.inp)',
         'performance_score(measurements.score.ttfb)',
         'count()',
       ],
       name: 'Web Vitals',
       query: [
-        'transaction.op:pageload has:measurements.score.total',
+        'transaction.op:[pageload,""]',
+        'span.op:[ui.interaction.click,""]',
+        'has:measurements.score.total',
         ...(transaction ? [`transaction:"${transaction}"`] : []),
         ...(tag ? [`${tag.key}:"${tag.name}"`] : []),
       ].join(' '),
@@ -97,10 +101,12 @@ export const useProjectWebVitalsScoresTimeseriesQuery = ({
     cls: [],
     ttfb: [],
     fid: [],
+    inp: [],
     total: [],
     unweightedCls: [],
     unweightedFcp: [],
     unweightedFid: [],
+    unweightedInp: [],
     unweightedLcp: [],
     unweightedTtfb: [],
   };
@@ -108,7 +114,7 @@ export const useProjectWebVitalsScoresTimeseriesQuery = ({
   result?.data?.['weighted_performance_score(measurements.score.lcp)']?.data.forEach(
     (interval, index) => {
       // Weighted data
-      ['lcp', 'fcp', 'cls', 'ttfb', 'fid'].forEach(webVital => {
+      ['lcp', 'fcp', 'cls', 'ttfb', 'fid', 'inp'].forEach(webVital => {
         data[webVital].push({
           value:
             result?.data?.[`weighted_performance_score(measurements.score.${webVital})`]
@@ -117,7 +123,7 @@ export const useProjectWebVitalsScoresTimeseriesQuery = ({
         });
       });
       // Unweighted data
-      ['lcp', 'fcp', 'cls', 'ttfb', 'fid'].forEach(webVital => {
+      ['lcp', 'fcp', 'cls', 'ttfb', 'fid', 'inp'].forEach(webVital => {
         // Capitalize first letter of webVital
         const capitalizedWebVital = webVital.charAt(0).toUpperCase() + webVital.slice(1);
         data[`unweighted${capitalizedWebVital}`].push({

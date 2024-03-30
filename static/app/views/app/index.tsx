@@ -1,5 +1,5 @@
 import {lazy, Suspense, useCallback, useEffect, useRef} from 'react';
-import {RouteComponentProps} from 'react-router';
+import type {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {
@@ -25,6 +25,7 @@ import {onRenderCallback, Profiler} from 'sentry/utils/performanceForSentry';
 import useApi from 'sentry/utils/useApi';
 import {useColorscheme} from 'sentry/utils/useColorscheme';
 import {useHotkeys} from 'sentry/utils/useHotkeys';
+import {useUser} from 'sentry/utils/useUser';
 import type {InstallWizardProps} from 'sentry/views/admin/installWizard';
 import {OrganizationContextProvider} from 'sentry/views/organizationContext';
 
@@ -34,10 +35,12 @@ type Props = {
   children: React.ReactNode;
 } & RouteComponentProps<{orgId?: string}, {}>;
 
-const InstallWizard: React.FC<InstallWizardProps> = lazy(
+const InstallWizard = lazy(
   () => import('sentry/views/admin/installWizard')
-);
+  // TODO(TS): DeprecatedAsyncComponent prop types are doing something weird
+) as unknown as React.ComponentType<InstallWizardProps>;
 const NewsletterConsent = lazy(() => import('sentry/views/newsletterConsent'));
+const BeaconConsent = lazy(() => import('sentry/views/beaconConsent'));
 
 /**
  * App is the root level container for all uathenticated routes.
@@ -46,6 +49,7 @@ function App({children, params}: Props) {
   useColorscheme();
 
   const api = useApi();
+  const user = useUser();
   const config = useLegacyStore(ConfigStore);
 
   // Command palette global-shortcut
@@ -144,8 +148,8 @@ function App({children, params}: Props) {
     }
 
     // Set the user for analytics
-    if (config.user) {
-      HookStore.get('analytics:init-user').map(cb => cb(config.user));
+    if (user) {
+      HookStore.get('analytics:init-user').map(cb => cb(user));
     }
 
     initApiClientErrorHandling();
@@ -153,27 +157,41 @@ function App({children, params}: Props) {
 
     // When the app is unloaded clear the organizationst list
     return () => OrganizationsStore.load([]);
-  }, [loadOrganizations, checkInternalHealth, config.messages, config.user]);
+  }, [loadOrganizations, checkInternalHealth, config.messages, user]);
 
   function clearUpgrade() {
     ConfigStore.set('needsUpgrade', false);
   }
 
   function clearNewsletterConsent() {
-    const flags = {...config.user.flags, newsletter_consent_prompt: false};
-    ConfigStore.set('user', {...config.user, flags});
+    const flags = {...user.flags, newsletter_consent_prompt: false};
+    ConfigStore.set('user', {...user, flags});
+  }
+
+  function clearBeaconConsentPrompt() {
+    ConfigStore.set('shouldShowBeaconConsentPrompt', false);
   }
 
   const displayInstallWizard =
-    config.user?.isSuperuser && config.needsUpgrade && config.isSelfHosted;
-  const newsletterConsentPrompt = config.user?.flags?.newsletter_consent_prompt;
+    user?.isSuperuser && config.needsUpgrade && config.isSelfHosted;
+  const newsletterConsentPrompt = user?.flags?.newsletter_consent_prompt;
   const partnershipAgreementPrompt = config.partnershipAgreementPrompt;
+  const beaconConsentPrompt =
+    user?.isSuperuser && config.isSelfHosted && config.shouldShowBeaconConsentPrompt;
 
   function renderBody() {
     if (displayInstallWizard) {
       return (
         <Suspense fallback={null}>
-          <InstallWizard onConfigured={clearUpgrade} />;
+          <InstallWizard onConfigured={clearUpgrade} />
+        </Suspense>
+      );
+    }
+
+    if (beaconConsentPrompt) {
+      return (
+        <Suspense fallback={null}>
+          <BeaconConsent onSubmitSuccess={clearBeaconConsentPrompt} />
         </Suspense>
       );
     }

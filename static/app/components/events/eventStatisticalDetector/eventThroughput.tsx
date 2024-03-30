@@ -8,15 +8,15 @@ import {LineChart} from 'sentry/components/charts/lineChart';
 import {RELATIVE_DAYS_WINDOW} from 'sentry/components/events/eventStatisticalDetector/consts';
 import * as SidebarSection from 'sentry/components/sidebarSection';
 import {t} from 'sentry/locale';
-import {Event, EventsStatsData, Group, IssueType, PageFilters} from 'sentry/types';
+import type {Event, EventsStatsData, Group, PageFilters} from 'sentry/types';
+import {IssueType} from 'sentry/types';
 import {defined} from 'sentry/utils';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import EventView, {MetaType} from 'sentry/utils/discover/eventView';
+import type {MetaType} from 'sentry/utils/discover/eventView';
+import EventView from 'sentry/utils/discover/eventView';
 import {RateUnit} from 'sentry/utils/discover/fields';
-import {
-  DiscoverQueryProps,
-  useGenericDiscoverQuery,
-} from 'sentry/utils/discover/genericDiscoverQuery';
+import type {DiscoverQueryProps} from 'sentry/utils/discover/genericDiscoverQuery';
+import {useGenericDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {formatPercentage, formatRate} from 'sentry/utils/formatters';
 import {useProfileEventsStats} from 'sentry/utils/profiling/hooks/useProfileEventsStats';
@@ -25,7 +25,7 @@ import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import useRouter from 'sentry/utils/useRouter';
-import {transformEventStats} from 'sentry/views/performance/trends/chart';
+import transformEventStats from 'sentry/views/performance/trends/utils/transformEventStats';
 
 const BUCKET_SIZE = 6 * 60 * 60; // 6 hours in seconds;
 
@@ -380,6 +380,6 @@ const CompareLabel = styled('div')<{change?: 'increase' | 'decrease'}>`
     p.change === 'increase'
       ? p.theme.red300
       : p.change === 'decrease'
-      ? p.theme.green300
-      : p.theme.gray300};
+        ? p.theme.green300
+        : p.theme.gray300};
 `;

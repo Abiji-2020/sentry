@@ -8,10 +8,7 @@ import Link from 'sentry/components/links/link';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import {
-  PageErrorAlert,
-  PageErrorProvider,
-} from 'sentry/utils/performance/contexts/pageError';
+import {PageAlert, PageAlertProvider} from 'sentry/utils/performance/contexts/pageAlert';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjects from 'sentry/utils/useProjects';
@@ -24,6 +21,7 @@ import {ScreenLoadSampleContainer} from 'sentry/views/starfish/views/screens/scr
 type Props = {
   groupId: string;
   transactionName: string;
+  additionalFilters?: Record<string, string>;
   onClose?: () => void;
   spanDescription?: string;
   spanOp?: string;
@@ -39,6 +37,7 @@ export function ScreenLoadSpanSamples({
   onClose,
   transactionRoute = '/performance/summary/',
   spanOp,
+  additionalFilters,
 }: Props) {
   const router = useRouter();
 
@@ -85,7 +84,7 @@ export function ScreenLoadSpanSamples({
   }
 
   return (
-    <PageErrorProvider>
+    <PageAlertProvider>
       <DetailPanel
         detailKey={detailKey}
         onClose={() => {
@@ -110,7 +109,7 @@ export function ScreenLoadSpanSamples({
             </Title>
           </TitleContainer>
         </HeaderContainer>
-        <PageErrorAlert />
+        <PageAlert />
         <ChartsContainer>
           <ChartsContainerItem key="release1">
             <ScreenLoadSampleContainer
@@ -121,6 +120,7 @@ export function ScreenLoadSpanSamples({
               sectionTitle={t('Release 1')}
               project={project}
               spanOp={spanOp}
+              additionalFilters={additionalFilters}
             />
           </ChartsContainerItem>
           <ChartsContainerItem key="release2">
@@ -132,11 +132,12 @@ export function ScreenLoadSpanSamples({
               sectionTitle={t('Release 2')}
               project={project}
               spanOp={spanOp}
+              additionalFilters={additionalFilters}
             />
           </ChartsContainerItem>
         </ChartsContainer>
       </DetailPanel>
-    </PageErrorProvider>
+    </PageAlertProvider>
   );
 }
 

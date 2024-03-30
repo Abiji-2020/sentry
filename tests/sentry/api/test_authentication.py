@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
 from django.http import HttpRequest
@@ -123,14 +123,16 @@ class TestDSNAuthentication(TestCase):
             self.auth.authenticate(request)
 
 
+@control_silo_test
 class TestOrgAuthTokenAuthentication(TestCase):
     def setUp(self):
         super().setUp()
 
         self.auth = OrgAuthTokenAuthentication()
         self.org = self.create_organization(owner=self.user)
+
         self.token = "sntrys_abc123_xyz"
-        self.org_auth_token = OrgAuthToken.objects.create(
+        self.org_auth_token = self.create_org_auth_token(
             name="Test Token 1",
             token_hashed=hash_token(self.token),
             organization_id=self.org.id,
@@ -160,7 +162,7 @@ class TestOrgAuthTokenAuthentication(TestCase):
             self.auth.authenticate(request)
 
     def test_inactive_key(self):
-        self.org_auth_token.update(date_deactivated=datetime.now())
+        self.org_auth_token.update(date_deactivated=datetime.now(UTC))
         request = HttpRequest()
         request.META["HTTP_AUTHORIZATION"] = f"Bearer {self.token}"
 
@@ -168,6 +170,7 @@ class TestOrgAuthTokenAuthentication(TestCase):
             self.auth.authenticate(request)
 
 
+@control_silo_test
 class TestTokenAuthentication(TestCase):
     def setUp(self):
         super().setUp()

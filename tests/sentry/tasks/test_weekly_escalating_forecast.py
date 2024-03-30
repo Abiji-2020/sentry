@@ -1,9 +1,8 @@
 from datetime import datetime, timezone
-from typing import List
 from unittest.mock import MagicMock, patch
 
 from sentry.issues.escalating_group_forecast import ONE_EVENT_FORECAST, EscalatingGroupForecast
-from sentry.issues.grouptype import ErrorGroupType, PerformanceDurationRegressionGroupType
+from sentry.issues.grouptype import ErrorGroupType, PerformanceP95EndpointRegressionGroupType
 from sentry.models.group import Group, GroupStatus
 from sentry.tasks.weekly_escalating_forecast import run_escalating_forecast
 from sentry.testutils.cases import APITestCase, SnubaTestCase
@@ -14,7 +13,7 @@ from tests.sentry.issues.test_utils import get_mock_groups_past_counts_response
 class TestWeeklyEscalatingForecast(APITestCase, SnubaTestCase):
     def create_archived_until_escalating_groups(
         self, num_groups: int, group_type: int = ErrorGroupType.type_id
-    ) -> List[Group]:
+    ) -> list[Group]:
         group_list = []
         project_1 = self.project
         for i in range(num_groups):
@@ -59,7 +58,7 @@ class TestWeeklyEscalatingForecast(APITestCase, SnubaTestCase):
         """
         with self.tasks():
             group_list = self.create_archived_until_escalating_groups(
-                num_groups=1, group_type=PerformanceDurationRegressionGroupType.type_id
+                num_groups=1, group_type=PerformanceP95EndpointRegressionGroupType.type_id
             )
 
             mock_query_groups_past_counts.return_value = {}
@@ -108,7 +107,7 @@ class TestWeeklyEscalatingForecast(APITestCase, SnubaTestCase):
     ) -> None:
         with self.tasks():
             group_list = self.create_archived_until_escalating_groups(
-                num_groups=1, group_type=PerformanceDurationRegressionGroupType.type_id
+                num_groups=1, group_type=PerformanceP95EndpointRegressionGroupType.type_id
             )
 
             mock_query_groups_past_counts.return_value = get_mock_groups_past_counts_response(
@@ -163,7 +162,7 @@ class TestWeeklyEscalatingForecast(APITestCase, SnubaTestCase):
     ) -> None:
         with self.tasks():
             group_list = self.create_archived_until_escalating_groups(
-                num_groups=3, group_type=PerformanceDurationRegressionGroupType.type_id
+                num_groups=3, group_type=PerformanceP95EndpointRegressionGroupType.type_id
             )
 
             mock_query_groups_past_counts.return_value = get_mock_groups_past_counts_response(
@@ -217,7 +216,7 @@ class TestWeeklyEscalatingForecast(APITestCase, SnubaTestCase):
     ) -> None:
         with self.tasks():
             group_list = self.create_archived_until_escalating_groups(
-                num_groups=1, group_type=PerformanceDurationRegressionGroupType.type_id
+                num_groups=1, group_type=PerformanceP95EndpointRegressionGroupType.type_id
             )
 
             mock_query_groups_past_counts.return_value = get_mock_groups_past_counts_response(

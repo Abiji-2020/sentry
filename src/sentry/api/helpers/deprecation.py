@@ -3,10 +3,10 @@ from __future__ import annotations
 import functools
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Tuple
 
 import isodate
 from croniter import croniter
+from django.conf import settings
 from isodate.isoerror import ISO8601Error
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -32,7 +32,7 @@ def _track_deprecated_metrics(request: Request, deprecation_date: datetime):
     request.deprecation_date = deprecation_date
 
 
-def _serialize_key(key: str) -> Tuple[str, str]:
+def _serialize_key(key: str) -> tuple[str, str]:
     """Converts the key into an option manager key used for the schedule crontab and blackout duration"""
     return f"{key}-cron", f"{key}-duration"
 
@@ -115,7 +115,8 @@ def deprecated(
         @functools.wraps(func)
         def endpoint_method(self, request: Request, *args, **kwargs):
             # Don't do anything for deprecated endpoints on self hosted
-            if is_self_hosted():
+            # but allow testing deprecation in development
+            if is_self_hosted() and not settings.ENVIRONMENT == "development":
                 return func(self, request, *args, **kwargs)
 
             now = datetime.now(timezone.utc)

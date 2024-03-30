@@ -35,6 +35,13 @@ describe('EventDetails', () => {
       statusCode: 200,
       body: [],
     });
+
+    MockApiClient.addMockResponse({
+      url: `/projects/${organization.slug}/latest/events/1/actionable-items/`,
+      body: {
+        errors: [],
+      },
+    });
   });
 
   afterEach(() => {
@@ -58,7 +65,7 @@ describe('EventDetails', () => {
       <EventDetails {...RouteComponentPropsFixture({params: {eventSlug: 'latest'}})} />,
       {organization}
     );
-    expect(screen.getByText(alertText)).toBeInTheDocument();
+    expect(await screen.findByText(alertText)).toBeInTheDocument();
 
     // Expect stores to be updated
     await act(tick);

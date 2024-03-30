@@ -1,8 +1,8 @@
 import styled from '@emotion/styled';
 
+import type {PromptResponse} from 'sentry/actionCreators/prompts';
 import {
   makePromptsCheckQueryKey,
-  PromptResponse,
   promptsUpdate,
   usePromptsCheck,
 } from 'sentry/actionCreators/prompts';
@@ -136,10 +136,9 @@ export function ErrorMigrationWarning({project, rule}: ErrorMigrationWarningProp
 }
 
 const DismissButton = styled(Button)`
-  color: ${p => p.theme.alert.warning.iconColor};
+  color: ${p => p.theme.alert.warning.color};
   pointer-events: all;
   &:hover {
-    color: ${p => p.theme.alert.warning.iconHoverColor};
     opacity: 0.5;
   }
 `;

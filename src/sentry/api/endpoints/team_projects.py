@@ -1,12 +1,10 @@
-from typing import List
-
 from django.db import IntegrityError, router, transaction
 from drf_spectacular.utils import OpenApiResponse, extend_schema
 from rest_framework import serializers, status
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from sentry import audit_log, features
+from sentry import audit_log
 from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import EnvironmentMixin, region_silo_endpoint
@@ -96,7 +94,7 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
         request=None,
         responses={
             200: inline_sentry_response_serializer(
-                "ListTeamProjectResponse", List[OrganizationProjectResponse]
+                "ListTeamProjectResponse", list[OrganizationProjectResponse]
             ),
             403: RESPONSE_FORBIDDEN,
             404: OpenApiResponse(description="Team not found."),
@@ -184,12 +182,8 @@ class TeamProjectsEndpoint(TeamEndpoint, EnvironmentMixin):
             # XXX: create sample event?
 
             # Turns on some inbound filters by default for new Javascript platform projects
-            if (
-                features.has("organizations:default-inbound-filters", team.organization)
-                and project.platform
-                and project.platform.startswith("javascript")
-            ):
-                set_default_inbound_filters(project)
+            if project.platform and project.platform.startswith("javascript"):
+                set_default_inbound_filters(project, team.organization)
 
             self.create_audit_entry(
                 request=request,

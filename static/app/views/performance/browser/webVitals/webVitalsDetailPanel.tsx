@@ -2,21 +2,18 @@ import {useMemo} from 'react';
 import {Link} from 'react-router';
 import styled from '@emotion/styled';
 
-import {LineChartSeries} from 'sentry/components/charts/lineChart';
-import GridEditable, {
-  COL_WIDTH_UNDEFINED,
+import type {LineChartSeries} from 'sentry/components/charts/lineChart';
+import type {
   GridColumnHeader,
   GridColumnOrder,
   GridColumnSortBy,
 } from 'sentry/components/gridEditable';
+import GridEditable, {COL_WIDTH_UNDEFINED} from 'sentry/components/gridEditable';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t, tct} from 'sentry/locale';
-import {getDuration} from 'sentry/utils/formatters';
-import {
-  PageErrorAlert,
-  PageErrorProvider,
-} from 'sentry/utils/performance/contexts/pageError';
+import {formatAbbreviatedNumber, getDuration} from 'sentry/utils/formatters';
+import {PageAlert, PageAlertProvider} from 'sentry/utils/performance/contexts/pageAlert';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import {PerformanceBadge} from 'sentry/views/performance/browser/webVitals/components/performanceBadge';
@@ -29,7 +26,7 @@ import {useProjectRawWebVitalsValuesTimeseriesQuery} from 'sentry/views/performa
 import {calculatePerformanceScoreFromStoredTableDataRow} from 'sentry/views/performance/browser/webVitals/utils/queries/storedScoreQueries/calculatePerformanceScoreFromStored';
 import {useProjectWebVitalsScoresQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/storedScoreQueries/useProjectWebVitalsScoresQuery';
 import {useTransactionWebVitalsQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/useTransactionWebVitalsQuery';
-import {
+import type {
   Row,
   RowWithScoreAndOpportunity,
   WebVitals,
@@ -41,7 +38,7 @@ type Column = GridColumnHeader;
 
 const columnOrder: GridColumnOrder[] = [
   {key: 'transaction', width: COL_WIDTH_UNDEFINED, name: 'Pages'},
-  {key: 'count()', width: COL_WIDTH_UNDEFINED, name: 'Pageloads'},
+  {key: 'count', width: COL_WIDTH_UNDEFINED, name: 'Pageloads'},
   {key: 'webVital', width: COL_WIDTH_UNDEFINED, name: 'Web Vital'},
   {key: 'score', width: COL_WIDTH_UNDEFINED, name: 'Score'},
   {key: 'opportunity', width: COL_WIDTH_UNDEFINED, name: 'Opportunity'},
@@ -71,10 +68,9 @@ export function WebVitalsDetailPanel({
   const projectScore = shouldUseStoredScores
     ? calculatePerformanceScoreFromStoredTableDataRow(projectScoresData?.data?.[0])
     : calculatePerformanceScoreFromTableDataRow(projectData?.data?.[0]);
-
   const {data, isLoading} = useTransactionWebVitalsQuery({
     limit: 100,
-    opportunityWebVital: webVital ?? 'total',
+    webVital: webVital ?? 'total',
     ...(webVital
       ? shouldUseStoredScores
         ? {
@@ -89,6 +85,7 @@ export function WebVitalsDetailPanel({
           }
       : {}),
     enabled: webVital !== null,
+    sortName: 'webVitalsDetailPanelSort',
   });
 
   const dataByOpportunity = useMemo(() => {
@@ -180,6 +177,11 @@ export function WebVitalsDetailPanel({
         </Tooltip>
       );
     }
+    if (col.key === 'count') {
+      if (webVital === 'inp') {
+        return <AlignRight>{t('Interactions')}</AlignRight>;
+      }
+    }
     return <AlignRight>{col.name}</AlignRight>;
   };
 
@@ -201,7 +203,7 @@ export function WebVitalsDetailPanel({
     }
     if (col.key === 'webVital') {
       let value: string | number = row[mapWebVitalToColumn(webVital)];
-      if (webVital && ['lcp', 'fcp', 'ttfb', 'fid'].includes(webVital)) {
+      if (webVital && ['lcp', 'fcp', 'ttfb', 'fid', 'inp'].includes(webVital)) {
         value = getFormattedDuration(value);
       } else if (webVital === 'cls') {
         value = value?.toFixed(2);
@@ -231,6 +233,11 @@ export function WebVitalsDetailPanel({
         </NoOverflow>
       );
     }
+    if (key === 'count') {
+      const count =
+        webVital === 'inp' ? row['count_scores(measurements.score.inp)'] : row['count()'];
+      return <AlignRight>{formatAbbreviatedNumber(count)}</AlignRight>;
+    }
     return <AlignRight>{row[key]}</AlignRight>;
   };
 
@@ -240,7 +247,7 @@ export function WebVitalsDetailPanel({
     | undefined;
 
   return (
-    <PageErrorProvider>
+    <PageAlertProvider>
       <DetailPanel detailKey={detailKey ?? undefined} onClose={onClose}>
         {webVital && (
           <WebVitalDescription
@@ -272,9 +279,9 @@ export function WebVitalsDetailPanel({
             location={location}
           />
         </TableContainer>
-        <PageErrorAlert />
+        <PageAlert />
       </DetailPanel>
-    </PageErrorProvider>
+    </PageAlertProvider>
   );
 }
 
@@ -290,6 +297,8 @@ const mapWebVitalToColumn = (webVital?: WebVitals | null) => {
       return 'p75(measurements.ttfb)';
     case 'fid':
       return 'p75(measurements.fid)';
+    case 'inp':
+      return 'p75(measurements.inp)';
     default:
       return 'count()';
   }

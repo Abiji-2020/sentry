@@ -1,6 +1,7 @@
-import {Fragment, useEffect, useState} from 'react';
+import {Fragment, useLayoutEffect, useMemo} from 'react';
 import styled from '@emotion/styled';
 import omit from 'lodash/omit';
+import * as qs from 'query-string';
 
 import {Alert} from 'sentry/components/alert';
 import {Button} from 'sentry/components/button';
@@ -10,39 +11,39 @@ import DiscoverButton from 'sentry/components/discoverButton';
 import SpanSummaryButton from 'sentry/components/events/interfaces/spans/spanSummaryButton';
 import FileSize from 'sentry/components/fileSize';
 import ExternalLink from 'sentry/components/links/externalLink';
-import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {
-  ErrorDot,
-  ErrorLevel,
-  ErrorMessageContent,
-  ErrorMessageTitle,
-  ErrorTitle,
-} from 'sentry/components/performance/waterfall/rowDetails';
 import Pill from 'sentry/components/pill';
 import Pills from 'sentry/components/pills';
 import {TransactionToProfileButton} from 'sentry/components/profiling/transactionToProfileButton';
-import {generateIssueEventTarget} from 'sentry/components/quickTrace/utils';
+import QuestionTooltip from 'sentry/components/questionTooltip';
 import {ALL_ACCESS_PROJECTS, PAGE_URL_PARAM} from 'sentry/constants/pageFilters';
-import {t, tn} from 'sentry/locale';
+import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {EventTransaction} from 'sentry/types/event';
+import type {Organization} from 'sentry/types';
+import type {EventTransaction} from 'sentry/types/event';
 import {assert} from 'sentry/types/utils';
 import {defined} from 'sentry/utils';
-import {trackAnalytics} from 'sentry/utils/analytics';
 import EventView from 'sentry/utils/discover/eventView';
 import {generateEventSlug} from 'sentry/utils/discover/urls';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {
-  QuickTraceEvent,
-  TraceErrorOrIssue,
-} from 'sentry/utils/performance/quickTrace/types';
+import type {TraceFullDetailed} from 'sentry/utils/performance/quickTrace/types';
+import {safeURL} from 'sentry/utils/url/safeURL';
 import {useLocation} from 'sentry/utils/useLocation';
 import useProjects from 'sentry/utils/useProjects';
+import {CustomMetricsEventData} from 'sentry/views/metrics/customMetricsEventData';
+import {IssueList} from 'sentry/views/performance/newTraceDetails/traceDrawer/details/issues/issues';
+import {TraceDrawerComponents} from 'sentry/views/performance/newTraceDetails/traceDrawer/details/styles';
+import {getTraceTabTitle} from 'sentry/views/performance/newTraceDetails/traceTabs';
+import type {
+  TraceTree,
+  TraceTreeNode,
+} from 'sentry/views/performance/newTraceDetails/traceTree';
 import {spanDetailsRouteWithQuery} from 'sentry/views/performance/transactionSummary/transactionSpans/spanDetails/utils';
 import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
-import {getPerformanceDuration} from 'sentry/views/performance/utils';
+import {getPerformanceDuration} from 'sentry/views/performance/utils/getPerformanceDuration';
+import {SpanDescription} from 'sentry/views/starfish/components/spanDescription';
+import {ModuleName} from 'sentry/views/starfish/types';
+import {resolveSpanModule} from 'sentry/views/starfish/utils/resolveSpanModule';
 
 import {OpsDot} from '../../opsBreakdown';
 
@@ -50,21 +51,18 @@ import * as SpanEntryContext from './context';
 import {GapSpanDetails} from './gapSpanDetails';
 import InlineDocs from './inlineDocs';
 import {SpanProfileDetails} from './spanProfileDetails';
-import {ParsedTraceType, ProcessedSpanType, rawSpanKeys, RawSpanType} from './types';
+import type {ParsedTraceType, RawSpanType} from './types';
+import {rawSpanKeys} from './types';
+import type {SubTimingInfo} from './utils';
 import {
-  getCumulativeAlertLevelFromErrors,
   getFormattedTimeRangeWithLeadingAndTrailingZero,
   getSpanSubTimings,
   getTraceDateTimeRange,
-  isErrorPerformanceError,
   isGapSpan,
   isHiddenDataKey,
   isOrphanSpan,
   scrollToSpan,
-  SubTimingInfo,
 } from './utils';
-
-const DEFAULT_ERRORS_VISIBLE = 5;
 
 const SIZE_DATA_KEYS = [
   'Encoded Body Size',
@@ -84,41 +82,34 @@ type TransactionResult = {
 };
 
 export type SpanDetailProps = {
-  childTransactions: QuickTraceEvent[] | null;
+  childTransactions: TraceFullDetailed[] | null;
   event: Readonly<EventTransaction>;
-  isRoot: boolean;
+  node: TraceTreeNode<TraceTree.NodeValue>;
+  onParentClick: (node: TraceTreeNode<TraceTree.NodeValue>) => void;
   openPanel: string | undefined;
   organization: Organization;
-  relatedErrors: TraceErrorOrIssue[] | null;
-  resetCellMeasureCache: () => void;
-  scrollToHash: (hash: string) => void;
-  span: ProcessedSpanType;
+  span: RawSpanType;
   trace: Readonly<ParsedTraceType>;
 };
 
 function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
-  const [errorsOpened, setErrorsOpened] = useState(false);
   const location = useLocation();
   const profileId = props.event.contexts.profile?.profile_id || '';
+  const issues = useMemo(() => {
+    return [...props.node.errors, ...props.node.performance_issues];
+  }, [props.node.errors, props.node.performance_issues]);
   const {projects} = useProjects();
   const project = projects.find(p => p.id === props.event.projectID);
+  const resolvedModule: ModuleName = resolveSpanModule(
+    props.span.sentry_tags?.op,
+    props.span.sentry_tags?.category
+  );
 
-  useEffect(() => {
-    // Run on mount.
-
-    const {span, organization, event} = props;
-    if (!('op' in span)) {
+  useLayoutEffect(() => {
+    if (!('op' in props.span)) {
       return;
     }
-
-    trackAnalytics('performance_views.event_details.open_span_details', {
-      organization,
-      operation: span.op ?? 'undefined',
-      origin: span.origin ?? 'undefined',
-      project_platform: event.platform ?? 'undefined',
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [props.span]);
 
   function renderTraversalButton(): React.ReactNode {
     if (!props.childTransactions) {
@@ -282,60 +273,16 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
     );
   }
 
-  function toggleErrors() {
-    setErrorsOpened(prevErrorsOpened => !prevErrorsOpened);
-  }
-
   function renderSpanErrorMessage() {
-    const {span, organization, relatedErrors} = props;
+    const {span, organization, node} = props;
 
-    if (!relatedErrors || relatedErrors.length <= 0 || isGapSpan(span)) {
+    const hasErrors = node.errors.size > 0 || node.performance_issues.size > 0;
+
+    if (!hasErrors || isGapSpan(span)) {
       return null;
     }
 
-    const visibleErrors = errorsOpened
-      ? relatedErrors
-      : relatedErrors.slice(0, DEFAULT_ERRORS_VISIBLE);
-
-    return (
-      <Alert type={getCumulativeAlertLevelFromErrors(relatedErrors)} system>
-        <ErrorMessageTitle>
-          {tn(
-            '%s error event or performance issue is associated with this span.',
-            '%s error events or performance issues are associated with this span.',
-            relatedErrors.length
-          )}
-        </ErrorMessageTitle>
-        <Fragment>
-          {visibleErrors.map(error => (
-            <ErrorMessageContent
-              key={error.event_id}
-              excludeLevel={isErrorPerformanceError(error)}
-            >
-              {isErrorPerformanceError(error) ? (
-                <ErrorDot level="error" />
-              ) : (
-                <Fragment>
-                  <ErrorDot level={error.level} />
-                  <ErrorLevel>{error.level}</ErrorLevel>
-                </Fragment>
-              )}
-
-              <ErrorTitle>
-                <Link to={generateIssueEventTarget(error, organization)}>
-                  {error.title}
-                </Link>
-              </ErrorTitle>
-            </ErrorMessageContent>
-          ))}
-        </Fragment>
-        {relatedErrors.length > DEFAULT_ERRORS_VISIBLE && (
-          <ErrorToggle size="xs" onClick={toggleErrors}>
-            {errorsOpened ? t('Show less') : t('Show more')}
-          </ErrorToggle>
-        )}
-      </Alert>
-    );
+    return <IssueList organization={organization} issues={issues} node={props.node} />;
   }
 
   function partitionSizes(data): {
@@ -373,23 +320,19 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
   }
 
   function renderSpanDetails() {
-    const {span, event, organization, resetCellMeasureCache, scrollToHash} = props;
+    const {span, event, organization} = props;
 
     if (isGapSpan(span)) {
       return (
         <SpanDetails>
           {organization.features.includes('profiling') ? (
-            <GapSpanDetails
-              event={event}
-              span={span}
-              resetCellMeasureCache={resetCellMeasureCache}
-            />
+            <GapSpanDetails event={event} span={span} resetCellMeasureCache={() => {}} />
           ) : (
             <InlineDocs
               orgSlug={organization.slug}
               platform={event.sdk?.name || ''}
               projectSlug={event?.projectSlug ?? ''}
-              resetCellMeasureCache={resetCellMeasureCache}
+              resetCellMeasureCache={() => {}}
             />
           )}
         </SpanDetails>
@@ -401,8 +344,7 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
     const {start: startTimeWithLeadingZero, end: endTimeWithLeadingZero} =
       getFormattedTimeRangeWithLeadingAndTrailingZero(startTimestamp, endTimestamp);
 
-    const duration = (endTimestamp - startTimestamp) * 1000;
-    const durationString = `${Number(duration.toFixed(3)).toLocaleString()}ms`;
+    const duration = endTimestamp - startTimestamp;
 
     const unknownKeys = Object.keys(span).filter(key => {
       return !isHiddenDataKey(key) && !rawSpanKeys.has(key as any);
@@ -415,6 +357,10 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
     );
 
     const timingKeys = getSpanSubTimings(span) ?? [];
+    const parentTransaction = props.node.parent_transaction;
+    const averageSpanSelfTimeInSeconds: number | undefined = span['span.average_time']
+      ? span['span.average_time'] / 1000
+      : undefined;
 
     return (
       <Fragment>
@@ -424,6 +370,35 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
         <SpanDetails>
           <table className="table key-value">
             <tbody>
+              <Row title={t('Duration')}>
+                <TraceDrawerComponents.Duration
+                  duration={duration}
+                  baseline={undefined}
+                />
+              </Row>
+              {span.exclusive_time ? (
+                <Row
+                  title={t('Self Time')}
+                  toolTipText={t(
+                    'The time spent exclusively in this span, excluding the total duration of its children'
+                  )}
+                >
+                  <TraceDrawerComponents.Duration
+                    ratio={span.exclusive_time / 1000 / duration}
+                    duration={span.exclusive_time / 1000}
+                    baseline={averageSpanSelfTimeInSeconds}
+                  />
+                </Row>
+              ) : null}
+              {parentTransaction ? (
+                <Row title="Parent Transaction">
+                  <td className="value">
+                    <a href="#" onClick={() => props.onParentClick(parentTransaction)}>
+                      {getTraceTabTitle(parentTransaction)}
+                    </a>
+                  </td>
+                </Row>
+              ) : null}
               <Row
                 title={
                   isGapSpan(span) ? (
@@ -432,7 +407,7 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
                     <SpanIdTitle
                       onClick={scrollToSpan(
                         span.span_id,
-                        scrollToHash,
+                        () => {},
                         location,
                         organization
                       )}
@@ -448,9 +423,7 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
                   borderless
                   size="zero"
                   iconSize="xs"
-                  text={`${window.location.href.replace(window.location.hash, '')}#span-${
-                    span.span_id
-                  }`}
+                  text={span.span_id}
                 />
               </Row>
               {profileId && project?.slug && (
@@ -472,11 +445,26 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
                   {profileId}
                 </Row>
               )}
-              <Row title={t('Description')} extra={renderSpanDetailActions()}>
-                {span?.description ?? ''}
-              </Row>
               <Row title={t('Status')}>{span.status || ''}</Row>
-              <Row title={t('Duration')}>{durationString}</Row>
+              <SpanHTTPInfo span={props.span} />
+              <Row
+                title={
+                  resolvedModule === ModuleName.DB && span.op?.startsWith('db')
+                    ? t('Database Query')
+                    : t('Description')
+                }
+                extra={renderSpanDetailActions()}
+              >
+                {resolvedModule === ModuleName.DB ? (
+                  <SpanDescription
+                    groupId={span.sentry_tags?.group ?? ''}
+                    op={span.op ?? ''}
+                    preliminaryDescription={span.description}
+                  />
+                ) : (
+                  span.description
+                )}
+              </Row>
               <Row title={t('Date Range')}>
                 {getDynamicText({
                   fixed: 'Mar 16, 2020 9:10:12 AM UTC',
@@ -510,11 +498,6 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
               </Row>
               <Row title={t('Span Group')}>
                 {defined(span.hash) ? String(span.hash) : null}
-              </Row>
-              <Row title={t('Span Self Time')}>
-                {defined(span.exclusive_time)
-                  ? `${Number(span.exclusive_time.toFixed(3)).toLocaleString()}ms`
-                  : null}
               </Row>
               {timingKeys.map(timing => (
                 <Row
@@ -558,6 +541,12 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
               ))}
             </tbody>
           </table>
+          {span._metrics_summary ? (
+            <CustomMetricsEventData
+              metricsSummary={span._metrics_summary}
+              startTimestamp={span.start_timestamp}
+            />
+          ) : null}
         </SpanDetails>
       </Fragment>
     );
@@ -574,6 +563,31 @@ function NewTraceDetailsSpanDetail(props: SpanDetailProps) {
       {renderSpanDetails()}
     </SpanDetailContainer>
   );
+}
+
+function SpanHTTPInfo({span}: {span: RawSpanType}) {
+  if (span.op === 'http.client' && span.description) {
+    const [method, url] = span.description.split(' ');
+
+    const parsedURL = safeURL(url);
+    const queryString = qs.parse(parsedURL?.search ?? '');
+
+    return parsedURL ? (
+      <Fragment>
+        <Row title={t('HTTP Method')}>{method}</Row>
+        <Row title={t('URL')}>
+          {parsedURL ? parsedURL?.origin + parsedURL?.pathname : 'failed to parse URL'}
+        </Row>
+        <Row title={t('Query')}>
+          {parsedURL
+            ? JSON.stringify(queryString, null, 2)
+            : 'failed to parse query string'}
+        </Row>
+      </Fragment>
+    ) : null;
+  }
+
+  return null;
 }
 
 function RowTimingPrefix({timing}: {timing: SubTimingInfo}) {
@@ -601,10 +615,12 @@ export const SpanDetailContainer = styled('div')`
 `;
 
 export const SpanDetails = styled('div')`
-  padding: ${space(2)};
-
   table.table.key-value td.key {
     max-width: 280px;
+  }
+
+  pre {
+    overflow: hidden !important;
   }
 `;
 
@@ -635,10 +651,6 @@ function TextTr({children}) {
   );
 }
 
-const ErrorToggle = styled(Button)`
-  margin-top: ${space(0.75)};
-`;
-
 const SpanIdTitle = styled('a')`
   display: flex;
   color: ${p => p.theme.textColor};
@@ -653,12 +665,14 @@ export function Row({
   children,
   prefix,
   extra = null,
+  toolTipText,
 }: {
   children: React.ReactNode;
   title: JSX.Element | string | null;
   extra?: React.ReactNode;
   keep?: boolean;
   prefix?: JSX.Element;
+  toolTipText?: string;
 }) {
   if (!keep && !children) {
     return null;
@@ -670,6 +684,7 @@ export function Row({
         <Flex>
           {prefix}
           {title}
+          {toolTipText ? <StyledQuestionTooltip size="xs" title={toolTipText} /> : null}
         </Flex>
       </td>
       <ValueTd className="value">
@@ -745,6 +760,10 @@ const StyledPre = styled('pre')`
 
 const ButtonContainer = styled('div')`
   padding: 8px 10px;
+`;
+
+const StyledQuestionTooltip = styled(QuestionTooltip)`
+  margin-left: ${space(0.5)};
 `;
 
 export default NewTraceDetailsSpanDetail;

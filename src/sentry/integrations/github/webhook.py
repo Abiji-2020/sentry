@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+from collections.abc import Callable, Mapping, MutableMapping
 from datetime import timezone
-from typing import Any, Callable, Dict, List, Mapping, MutableMapping
+from typing import Any
 
 from dateutil.parser import parse as parse_date
 from django.db import IntegrityError, router, transaction
@@ -14,7 +15,7 @@ from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.request import Request
 
-from sentry import analytics, features, options
+from sentry import analytics, options
 from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint, all_silo_endpoint
@@ -24,6 +25,7 @@ from sentry.integrations.utils.scope import clear_tags_and_context
 from sentry.models.commit import Commit
 from sentry.models.commitauthor import CommitAuthor
 from sentry.models.commitfilechange import CommitFileChange
+from sentry.models.options.organization_option import OrganizationOption
 from sentry.models.organization import Organization
 from sentry.models.pullrequest import PullRequest
 from sentry.models.repository import Repository
@@ -236,7 +238,7 @@ class InstallationEventWebhook:
         self,
         event: Mapping[str, Any],
         integration: RpcIntegration,
-        org_integrations: List[RpcOrganizationIntegration],
+        org_integrations: list[RpcOrganizationIntegration],
     ) -> None:
         org_ids = {oi.organization_id for oi in org_integrations}
 
@@ -528,9 +530,13 @@ class PullRequestEventWebhook(Webhook):
             )
 
             if action == "opened" and created:
-                if not features.has("organizations:integrations-open-pr-comment", organization):
+                if not OrganizationOption.objects.get_value(
+                    organization=organization,
+                    key="sentry:github_open_pr_bot",
+                    default=True,
+                ):
                     logger.info(
-                        "github.open_pr_comment.flag_missing",
+                        "github.open_pr_comment.option_missing",
                         extra={"organization_id": organization.id},
                     )
                     return
@@ -558,7 +564,7 @@ class GitHubIntegrationsWebhookEndpoint(Endpoint):
 
     owner = ApiOwner.ECOSYSTEM
     publish_status = {
-        "POST": ApiPublishStatus.UNKNOWN,
+        "POST": ApiPublishStatus.PRIVATE,
     }
 
     _handlers = {
@@ -587,7 +593,7 @@ class GitHubIntegrationsWebhookEndpoint(Endpoint):
 
         return super().dispatch(request, *args, **kwargs)
 
-    def get_logging_data(self) -> Dict[str, Any] | None:
+    def get_logging_data(self) -> dict[str, Any] | None:
         return {
             "request_method": self.request.method,
             "request_path": self.request.path,
@@ -620,7 +626,7 @@ class GitHubIntegrationsWebhookEndpoint(Endpoint):
             return HttpResponse(status=400)
 
         if not handler:
-            logger.error(
+            logger.info(
                 "github.webhook.missing-handler",
                 extra={"event_type": request.META["HTTP_X_GITHUB_EVENT"]},
             )

@@ -1,15 +1,10 @@
-import {
-  initializeData as _initializeData,
-  InitializeDataSettings,
-} from 'sentry-test/performance/initializePerformanceData';
-import {act, render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import type {InitializeDataSettings} from 'sentry-test/performance/initializePerformanceData';
+import {initializeData as _initializeData} from 'sentry-test/performance/initializePerformanceData';
+import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
 import {MetricsCardinalityProvider} from 'sentry/utils/performance/contexts/metricsCardinality';
 import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
-import {
-  PageErrorAlert,
-  PageErrorProvider,
-} from 'sentry/utils/performance/contexts/pageError';
+import {PageAlert, PageAlertProvider} from 'sentry/utils/performance/contexts/pageAlert';
 import {PerformanceDisplayProvider} from 'sentry/utils/performance/contexts/performanceDisplayContext';
 import {OrganizationContext} from 'sentry/views/organizationContext';
 import WidgetContainer from 'sentry/views/performance/landing/widgets/components/widgetContainer';
@@ -132,7 +127,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
     }
   });
 
-  it('Check requests when changing widget props', function () {
+  it('Check requests when changing widget props', async function () {
     const data = initializeData();
 
     wrapper = render(
@@ -142,7 +137,9 @@ describe('Performance > Widgets > WidgetContainer', function () {
       />
     );
 
-    expect(eventStatsMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(eventStatsMock).toHaveBeenCalledTimes(1);
+    });
 
     // Change eventView reference
     data.eventView = data.eventView.clone();
@@ -154,7 +151,9 @@ describe('Performance > Widgets > WidgetContainer', function () {
       />
     );
 
-    expect(eventStatsMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(eventStatsMock).toHaveBeenCalledTimes(1);
+    });
 
     // Change eventView statsperiod
     const modifiedData = initializeData({
@@ -168,7 +167,9 @@ describe('Performance > Widgets > WidgetContainer', function () {
       />
     );
 
-    expect(eventStatsMock).toHaveBeenCalledTimes(2);
+    await waitFor(() => {
+      expect(eventStatsMock).toHaveBeenCalledTimes(2);
+    });
 
     expect(eventStatsMock).toHaveBeenNthCalledWith(
       2,
@@ -185,7 +186,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
     );
   });
 
-  it('Check requests when changing widget props for GenericDiscoverQuery based widget', function () {
+  it('Check requests when changing widget props for GenericDiscoverQuery based widget', async function () {
     const data = initializeData();
 
     wrapper = render(
@@ -197,7 +198,9 @@ describe('Performance > Widgets > WidgetContainer', function () {
       </MEPSettingProvider>
     );
 
-    expect(eventsTrendsStats).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(eventsTrendsStats).toHaveBeenCalledTimes(1);
+    });
 
     // Change eventView reference
     data.eventView = data.eventView.clone();
@@ -211,7 +214,9 @@ describe('Performance > Widgets > WidgetContainer', function () {
       </MEPSettingProvider>
     );
 
-    expect(eventsTrendsStats).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(eventsTrendsStats).toHaveBeenCalledTimes(1);
+    });
 
     // Change eventView statsperiod
     const modifiedData = initializeData({
@@ -227,7 +232,9 @@ describe('Performance > Widgets > WidgetContainer', function () {
       </MEPSettingProvider>
     );
 
-    expect(eventsTrendsStats).toHaveBeenCalledTimes(2);
+    await waitFor(() => {
+      expect(eventsTrendsStats).toHaveBeenCalledTimes(2);
+    });
 
     expect(eventsTrendsStats).toHaveBeenNthCalledWith(
       2,
@@ -246,7 +253,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
             'transaction.op:pageload tpm():>0.01 count_percentage():>0.25 count_percentage():<4 trend_percentage():>0% confidence():>6',
           sort: 'trend_percentage()',
           statsPeriod: '14d',
-          trendFunction: 'p50(transaction.duration)',
+          trendFunction: 'p95(transaction.duration)',
           trendType: 'improved',
         }),
       })
@@ -266,17 +273,14 @@ describe('Performance > Widgets > WidgetContainer', function () {
     });
 
     wrapper = render(
-      <PageErrorProvider>
-        <PageErrorAlert />
+      <PageAlertProvider>
+        <PageAlert />
         <WrappedComponent
           data={data}
           defaultChartSetting={PerformanceWidgetSetting.TPM_AREA}
         />
-      </PageErrorProvider>
+      </PageAlertProvider>
     );
-
-    // Provider update is after request promise.
-    await act(async () => {});
 
     expect(await screen.findByTestId('performance-widget-title')).toHaveTextContent(
       'Transactions Per Minute'
@@ -841,7 +845,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
             'transaction.op:pageload tpm():>0.01 count_percentage():>0.25 count_percentage():<4 trend_percentage():>0% confidence():>6',
           sort: 'trend_percentage()',
           statsPeriod: '7d',
-          trendFunction: 'p50(transaction.duration)',
+          trendFunction: 'p95(transaction.duration)',
           trendType: 'improved',
         }),
       })
@@ -961,6 +965,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
             'p75(measurements.cls)',
             'p75(measurements.ttfb)',
             'p75(measurements.fid)',
+            'p75(measurements.inp)',
             'p75(transaction.duration)',
             'count_web_vitals(measurements.lcp, any)',
             'count_web_vitals(measurements.fcp, any)',
@@ -969,7 +974,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
             'count_web_vitals(measurements.ttfb, any)',
             'count()',
           ],
-          query: 'transaction.op:pageload',
+          query: 'transaction.op:[pageload,""] span.op:[ui.interaction.click,""]',
         }),
       })
     );
@@ -1031,7 +1036,7 @@ describe('Performance > Widgets > WidgetContainer', function () {
             'transaction.op:pageload tpm():>0.01 count_percentage():>0.25 count_percentage():<4 trend_percentage():>0% confidence():>6',
           sort: '-trend_percentage()',
           statsPeriod: '7d',
-          trendFunction: 'p50(transaction.duration)',
+          trendFunction: 'p95(transaction.duration)',
           trendType: 'regression',
         }),
       })

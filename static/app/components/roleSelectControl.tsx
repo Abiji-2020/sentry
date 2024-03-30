@@ -1,9 +1,8 @@
 import styled from '@emotion/styled';
 
-import SelectControl, {
-  ControlProps,
-} from 'sentry/components/forms/controls/selectControl';
-import {MemberRole} from 'sentry/types';
+import type {ControlProps} from 'sentry/components/forms/controls/selectControl';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
+import type {MemberRole} from 'sentry/types';
 
 type OptionType = {
   details: React.ReactNode;
@@ -25,15 +24,17 @@ type Props = Omit<ControlProps<OptionType>, 'onChange' | 'value'> & {
 function RoleSelectControl({roles, disableUnallowed, ...props}: Props) {
   return (
     <SelectControl
-      options={roles?.map(
-        (r: MemberRole) =>
-          ({
-            value: r.id,
-            label: r.name,
-            disabled: (disableUnallowed && !r.allowed) || r.isRetired,
-            details: <Details>{r.desc}</Details>,
-          }) as OptionType
-      )}
+      options={roles
+        ?.filter(r => !r.isRetired)
+        .map(
+          (r: MemberRole) =>
+            ({
+              value: r.id,
+              label: r.name,
+              disabled: disableUnallowed && !r.allowed,
+              details: <Details>{r.desc}</Details>,
+            }) as OptionType
+        )}
       showDividers
       {...props}
     />

@@ -27,7 +27,7 @@ import {getResourceTypeFilter} from 'sentry/views/performance/browser/resources/
 import {ModuleName} from 'sentry/views/starfish/types';
 import {QueryParameterNames} from 'sentry/views/starfish/views/queryParameters';
 import {SpanTimeCharts} from 'sentry/views/starfish/views/spans/spanTimeCharts';
-import {ModuleFilters} from 'sentry/views/starfish/views/spans/useModuleFilters';
+import type {ModuleFilters} from 'sentry/views/starfish/views/spans/useModuleFilters';
 
 const {
   SPAN_OP: RESOURCE_TYPE,
@@ -61,12 +61,14 @@ function ResourceView() {
 
   return (
     <Fragment>
-      <SpanTimeCharts
-        moduleName={ModuleName.OTHER}
-        appliedFilters={spanTimeChartsFilters}
-        throughputUnit={RESOURCE_THROUGHPUT_UNIT}
-        extraQuery={extraQuery}
-      />
+      <SpanTimeChartsContainer>
+        <SpanTimeCharts
+          moduleName={ModuleName.RESOURCE}
+          appliedFilters={spanTimeChartsFilters}
+          throughputUnit={RESOURCE_THROUGHPUT_UNIT}
+          extraQuery={extraQuery}
+        />
+      </SpanTimeChartsContainer>
 
       <FilterOptionsContainer columnCount={3}>
         <ResourceTypeSelector value={filters[RESOURCE_TYPE] || ''} />
@@ -199,6 +201,10 @@ export function TransactionSelector({
     />
   );
 }
+
+export const SpanTimeChartsContainer = styled('div')`
+  margin-bottom: ${space(2)};
+`;
 
 export const FilterOptionsContainer = styled('div')<{columnCount: number}>`
   display: grid;

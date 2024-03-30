@@ -1,5 +1,6 @@
 import type {
   AggregateSpanType,
+  MetricsSummary,
   RawSpanType,
   TraceContextType,
 } from 'sentry/components/events/interfaces/spans/types';
@@ -673,7 +674,7 @@ type EventContexts = {
   unity?: UnityContext;
 };
 
-export type Measurement = {value: number; unit?: string};
+export type Measurement = {value: number; type?: string; unit?: string};
 
 export type EventTag = {key: string; value: string};
 
@@ -815,6 +816,7 @@ export interface EventTransaction
   )[];
   startTimestamp: number;
   type: EventOrGroupType.TRANSACTION;
+  _metrics_summary?: MetricsSummary;
   perfProblem?: PerformanceDetectorData;
 }
 

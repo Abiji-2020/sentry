@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import tempfile
 from pathlib import Path
-from typing import Type
 
 import yaml
 from django.db.models import Model
@@ -20,14 +19,13 @@ from sentry.testutils.helpers.backups import (
     export_to_file,
 )
 from sentry.testutils.pytest.fixtures import read_snapshot_file
-from sentry.testutils.silo import region_silo_test, strip_silo_mode_test_suffix
+from sentry.testutils.silo import strip_silo_mode_test_suffix
 from sentry.utils import json
 from tests.sentry.backup import expect_models, verify_models_in_output
 
 RELEASE_TESTED: set[NormalizedModelName] = set()
 
 
-@region_silo_test
 class ReleaseTests(BackupTestCase):
     """
     Ensure that exports from the last two released versions of self-hosted are still able to be
@@ -64,7 +62,7 @@ class ReleaseTests(BackupTestCase):
         return False
 
     @expect_models(RELEASE_TESTED, "__all__")
-    def test_at_head(self, expected_models: list[Type[Model]]):
+    def test_at_head(self, expected_models: list[type[Model]]):
         with tempfile.TemporaryDirectory() as tmp_dir:
             # Convert the existing snapshot from YAML to an equivalent temporary JSON file.
             snapshot_path = self.get_snapshot_path("head")
@@ -98,31 +96,31 @@ class ReleaseTests(BackupTestCase):
             # Check the export so that we can ensure that all models were seen.
             verify_models_in_output(expected_models, exported)
 
+    def test_at_24_2_0(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            _, snapshot_refval = read_snapshot_file(self.get_snapshot_path("24.2.0"))
+            snapshot_data = yaml.safe_load(snapshot_refval)
+            tmp_path = Path(tmp_dir).joinpath(f"{self._testMethodName}.json")
+            with open(tmp_path, "w") as f:
+                json.dump(snapshot_data, f)
+
+            with open(tmp_path, "rb") as f:
+                import_in_global_scope(f, printer=NOOP_PRINTER)
+
+    def test_at_24_1_2(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            _, snapshot_refval = read_snapshot_file(self.get_snapshot_path("24.1.2"))
+            snapshot_data = yaml.safe_load(snapshot_refval)
+            tmp_path = Path(tmp_dir).joinpath(f"{self._testMethodName}.json")
+            with open(tmp_path, "w") as f:
+                json.dump(snapshot_data, f)
+
+            with open(tmp_path, "rb") as f:
+                import_in_global_scope(f, printer=NOOP_PRINTER)
+
     def test_at_24_1_0(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             _, snapshot_refval = read_snapshot_file(self.get_snapshot_path("24.1.0"))
-            snapshot_data = yaml.safe_load(snapshot_refval)
-            tmp_path = Path(tmp_dir).joinpath(f"{self._testMethodName}.json")
-            with open(tmp_path, "w") as f:
-                json.dump(snapshot_data, f)
-
-            with open(tmp_path, "rb") as f:
-                import_in_global_scope(f, printer=NOOP_PRINTER)
-
-    def test_at_23_12_1(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            _, snapshot_refval = read_snapshot_file(self.get_snapshot_path("23.12.1"))
-            snapshot_data = yaml.safe_load(snapshot_refval)
-            tmp_path = Path(tmp_dir).joinpath(f"{self._testMethodName}.json")
-            with open(tmp_path, "w") as f:
-                json.dump(snapshot_data, f)
-
-            with open(tmp_path, "rb") as f:
-                import_in_global_scope(f, printer=NOOP_PRINTER)
-
-    def test_at_23_12_0(self):
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            _, snapshot_refval = read_snapshot_file(self.get_snapshot_path("23.12.0"))
             snapshot_data = yaml.safe_load(snapshot_refval)
             tmp_path = Path(tmp_dir).joinpath(f"{self._testMethodName}.json")
             with open(tmp_path, "w") as f:

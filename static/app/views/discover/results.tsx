@@ -1,8 +1,9 @@
 import {Component, Fragment} from 'react';
-import {browserHistory, InjectedRouter} from 'react-router';
+import type {InjectedRouter} from 'react-router';
+import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
-import {Location} from 'history';
+import type {Location} from 'history';
 import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 
@@ -27,12 +28,12 @@ import {
   normalizeDateTimeString,
 } from 'sentry/components/organizations/pageFilters/parse';
 import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
-import {CursorHandler} from 'sentry/components/pagination';
+import type {CursorHandler} from 'sentry/components/pagination';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {MAX_QUERY_LENGTH} from 'sentry/constants';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization, PageFilters, SavedQuery} from 'sentry/types';
+import type {Organization, PageFilters, SavedQuery} from 'sentry/types';
 import {defined, generateQueryWithTag} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {CustomMeasurementsContext} from 'sentry/utils/customMeasurements/customMeasurementsContext';
@@ -298,14 +299,8 @@ export class Results extends Component<Props, State> {
 
     // If the view is not valid, redirect to a known valid state.
     const {location, organization, selection, isHomepage, savedQuery} = this.props;
-    const isReplayEnabled = organization.features.includes('session-replay');
-    const defaultEventView = Object.assign({}, DEFAULT_EVENT_VIEW, {
-      fields: isReplayEnabled
-        ? DEFAULT_EVENT_VIEW.fields.concat(['replayId'])
-        : DEFAULT_EVENT_VIEW.fields,
-    });
 
-    const query = isHomepage && savedQuery ? omit(savedQuery, 'id') : defaultEventView;
+    const query = isHomepage && savedQuery ? omit(savedQuery, 'id') : DEFAULT_EVENT_VIEW;
     const nextEventView = EventView.fromNewQueryWithLocation(query, location);
     if (nextEventView.project.length === 0 && selection.projects) {
       nextEventView.project = selection.projects;

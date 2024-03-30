@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar, FrozenSet, Mapping, MutableMapping, Optional
+from collections.abc import Mapping, MutableMapping
+from typing import Any, ClassVar
 
 from django.db import models
 
@@ -43,9 +44,11 @@ class OrganizationMemberTeam(ReplicatedRegionModel):
 
     def outbox_for_update(self, shard_identifier: int | None = None) -> RegionOutboxBase:
         return super().outbox_for_update(
-            shard_identifier=self.organizationmember.organization_id
-            if shard_identifier is None
-            else shard_identifier
+            shard_identifier=(
+                self.organizationmember.organization_id
+                if shard_identifier is None
+                else shard_identifier
+            )
         )
 
     def handle_async_replication(self, shard_identifier: int) -> None:
@@ -83,8 +86,7 @@ class OrganizationMemberTeam(ReplicatedRegionModel):
         If the role field is null, resolve to the minimum team role given by this
         member's organization role.
         """
-        highest_org_role = self.organizationmember.get_all_org_roles_sorted()[0].id
-        minimum_role = roles.get_minimum_team_role(highest_org_role)
+        minimum_role = roles.get_minimum_team_role(self.organizationmember.role)
 
         if self.role and features.has(
             "organizations:team-roles", self.organizationmember.organization
@@ -95,8 +97,8 @@ class OrganizationMemberTeam(ReplicatedRegionModel):
         return minimum_role
 
     def get_scopes(
-        self, team_roles_cache: Optional[MutableMapping[int, bool]] = None
-    ) -> FrozenSet[str]:
+        self, team_roles_cache: MutableMapping[int, bool] | None = None
+    ) -> frozenset[str]:
         """Get the scopes belonging to this member's team-level role."""
         if team_roles_cache is None:
             team_roles_cache = {}

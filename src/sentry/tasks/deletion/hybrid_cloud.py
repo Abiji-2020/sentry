@@ -11,7 +11,7 @@ Tombstone row will not, therefore, cascade to any related cross silo rows.
 import datetime
 from dataclasses import dataclass
 from hashlib import sha1
-from typing import Any, List, Tuple, Type
+from typing import Any
 from uuid import uuid4
 
 import sentry_sdk
@@ -21,7 +21,6 @@ from django.db import connections, router
 from django.db.models import Max, Min
 from django.db.models.manager import BaseManager
 from django.utils import timezone
-from sentry_sdk.crons.decorator import monitor
 
 from sentry.db.models.fields.hybrid_cloud_foreign_key import HybridCloudForeignKey
 from sentry.models.tombstone import TombstoneBase
@@ -42,7 +41,7 @@ def get_watermark_key(prefix: str, field: HybridCloudForeignKey) -> str:
     return f"{prefix}.{field.model._meta.db_table}.{field.name}"
 
 
-def get_watermark(prefix: str, field: HybridCloudForeignKey) -> Tuple[int, str]:
+def get_watermark(prefix: str, field: HybridCloudForeignKey) -> tuple[int, str]:
     with redis.clusters.get("default").get_local_client_for_key("deletions.watermark") as client:
         key = get_watermark_key(prefix, field)
         v = client.get(key)
@@ -99,8 +98,6 @@ def _chunk_watermark_batch(
     acks_late=True,
     silo_mode=SiloMode.CONTROL,
 )
-# TODO(rjo100): dual write check-ins for debugging
-@monitor(monitor_slug="schedule-hybrid-cloud-foreign-key-jobs-control-test")
 def schedule_hybrid_cloud_foreign_key_jobs_control():
     _schedule_hybrid_cloud_foreign_key(
         SiloMode.CONTROL, process_hybrid_cloud_foreign_key_cascade_batch_control
@@ -113,8 +110,6 @@ def schedule_hybrid_cloud_foreign_key_jobs_control():
     acks_late=True,
     silo_mode=SiloMode.REGION,
 )
-# TODO(rjo100): dual write check-ins for debugging
-@monitor(monitor_slug="schedule-hybrid-cloud-foreign-key-jobs-test")
 def schedule_hybrid_cloud_foreign_key_jobs():
     _schedule_hybrid_cloud_foreign_key(
         SiloMode.REGION, process_hybrid_cloud_foreign_key_cascade_batch
@@ -235,7 +230,7 @@ def get_batch_size() -> int:
 def _process_tombstone_reconciliation(
     field: HybridCloudForeignKey,
     model: Any,
-    tombstone_cls: Type[TombstoneBase],
+    tombstone_cls: type[TombstoneBase],
     row_after_tombstone: bool,
 ) -> bool:
     from sentry import deletions
@@ -252,7 +247,7 @@ def _process_tombstone_reconciliation(
         prefix, field, watermark_manager, batch_size=get_batch_size()
     )
     has_more = watermark_batch.has_more
-    to_delete_ids: List[int] = []
+    to_delete_ids: list[int] = []
 
     if watermark_batch.low < watermark_batch.up:
         oldest_seen: datetime.datetime = timezone.now()

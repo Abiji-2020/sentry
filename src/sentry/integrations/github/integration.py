@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import timezone
-from typing import Any, Collection, Dict, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
+from typing import Any
 
 from django.http import HttpResponse
 from django.utils.text import slugify
 from django.utils.translation import gettext_lazy as _
-from isodate import parse_datetime
 from rest_framework.request import Request
 
 from sentry import features, options
@@ -106,6 +105,13 @@ API_ERRORS = {
     401: ERR_UNAUTHORIZED,
 }
 
+ERR_INTEGRATION_EXISTS_ON_ANOTHER_ORG = _(
+    "It seems that your GitHub account has been installed on another Sentry organization. Please uninstall and try again."
+)
+ERR_INTEGRATION_PENDING_DELETION = _(
+    "It seems that your Sentry organization has an installation pending deletion. Please wait ~15min for the uninstall to complete and try again."
+)
+
 
 def build_repository_query(metadata: Mapping[str, Any], name: str, query: str) -> bytes:
     account_type = "user" if metadata["account_type"] == "User" else "org"
@@ -115,7 +121,7 @@ def build_repository_query(metadata: Mapping[str, Any], name: str, query: str) -
 # Github App docs and list of available endpoints
 # https://docs.github.com/en/rest/apps/installations
 # https://docs.github.com/en/rest/overview/endpoints-available-for-github-apps
-class GitHubIntegration(IntegrationInstallation, GitHubIssueBasic, RepositoryMixin, CommitContextMixin):  # type: ignore
+class GitHubIntegration(IntegrationInstallation, GitHubIssueBasic, RepositoryMixin, CommitContextMixin):  # type: ignore[misc]
     repo_search = True
     codeowners_locations = ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]
 
@@ -131,8 +137,8 @@ class GitHubIntegration(IntegrationInstallation, GitHubIssueBasic, RepositoryMix
 
         return False
 
-    def get_trees_for_org(self, cache_seconds: int = 3600 * 24) -> Dict[str, RepoTree]:
-        trees: Dict[str, RepoTree] = {}
+    def get_trees_for_org(self, cache_seconds: int = 3600 * 24) -> dict[str, RepoTree]:
+        trees: dict[str, RepoTree] = {}
         domain_name = self.model.metadata["domain_name"]
         extra = {"metadata": self.model.metadata}
         if domain_name.find("github.com/") == -1:
@@ -248,51 +254,6 @@ class GitHubIntegration(IntegrationInstallation, GitHubIssueBasic, RepositoryMix
             return False
         return True
 
-    def get_commit_context(
-        self, repo: Repository, filepath: str, ref: str, event_frame: Mapping[str, Any]
-    ) -> Mapping[str, str] | None:
-        lineno = event_frame.get("lineno", 0)
-        if not lineno:
-            return None
-        blame_range: Sequence[Mapping[str, Any]] | None = self.get_blame_for_file(
-            repo, filepath, ref, lineno
-        )
-
-        if blame_range is None:
-            return None
-
-        try:
-            commit: Mapping[str, Any] = max(
-                (
-                    blame
-                    for blame in blame_range
-                    if blame.get("startingLine", 0) <= lineno <= blame.get("endingLine", 0)
-                    and blame.get("commit", {}).get("committedDate")
-                ),
-                key=lambda blame: parse_datetime(blame.get("commit", {}).get("committedDate")),
-                default={},
-            )
-            if not commit:
-                return None
-        except (ValueError, IndexError):
-            return None
-
-        commitInfo = commit.get("commit")
-        if not commitInfo:
-            return None
-        else:
-            committed_date = parse_datetime(commitInfo.get("committedDate")).astimezone(
-                timezone.utc
-            )
-
-            return {
-                "commitId": commitInfo.get("oid"),
-                "committedDate": committed_date,
-                "commitMessage": commitInfo.get("message"),
-                "commitAuthorName": commitInfo.get("author", {}).get("name"),
-                "commitAuthorEmail": commitInfo.get("author", {}).get("email"),
-            }
-
 
 class GitHubIntegrationProvider(IntegrationProvider):
     key = "github"
@@ -346,7 +307,7 @@ class GitHubIntegrationProvider(IntegrationProvider):
         )
 
     def get_pipeline_views(self) -> Sequence[PipelineView]:
-        return [GitHubInstallationRedirect()]
+        return [GitHubInstallation()]
 
     def get_installation_info(self, installation_id: str) -> Mapping[str, Any]:
         client = self.get_client()
@@ -381,9 +342,6 @@ class GitHubIntegrationProvider(IntegrationProvider):
         if state.get("sender"):
             integration["metadata"]["sender"] = state["sender"]
 
-        if state.get("reinstall_id"):
-            integration["reinstall_id"] = state["reinstall_id"]
-
         return integration
 
     def setup(self) -> None:
@@ -394,82 +352,79 @@ class GitHubIntegrationProvider(IntegrationProvider):
         )
 
 
-class GitHubInstallationRedirect(PipelineView):
+class GitHubInstallation(PipelineView):
     def get_app_url(self) -> str:
         name = options.get("github-app.name")
         return f"https://github.com/apps/{slugify(name)}"
 
     def dispatch(self, request: Request, pipeline: Pipeline) -> HttpResponse:
-        if "reinstall_id" in request.GET:
-            pipeline.bind_state("reinstall_id", request.GET["reinstall_id"])
+        if "installation_id" not in request.GET:
+            return self.redirect(self.get_app_url())
 
-        if "installation_id" in request.GET:
-            self.determine_active_organization(request)
+        self.determine_active_organization(request)
 
-            integration_pending_deletion_exists = False
-            if self.active_organization:
-                # We want to wait until the scheduled deletions finish or else the
-                # post install to migrate repos do not work.
-                integration_pending_deletion_exists = OrganizationIntegration.objects.filter(
-                    integration__provider=GitHubIntegrationProvider.key,
-                    organization_id=self.active_organization.organization.id,
-                    status=ObjectStatus.PENDING_DELETION,
-                ).exists()
+        integration_pending_deletion_exists = False
+        if self.active_organization:
+            # We want to wait until the scheduled deletions finish or else the
+            # post install to migrate repos do not work.
+            integration_pending_deletion_exists = OrganizationIntegration.objects.filter(
+                integration__provider=GitHubIntegrationProvider.key,
+                organization_id=self.active_organization.organization.id,
+                status=ObjectStatus.PENDING_DELETION,
+            ).exists()
 
-            if integration_pending_deletion_exists:
-                document_origin = "document.origin"
-                if self.active_organization and features.has(
-                    "organizations:customer-domains", self.active_organization.organization
-                ):
-                    document_origin = (
-                        f'"{generate_organization_url(self.active_organization.organization.slug)}"'
-                    )
-                return render_to_response(
-                    "sentry/integrations/integration-pending-deletion.html",
-                    context={
-                        "payload": {
-                            "success": False,
-                            "data": {"error": _("GitHub installation pending deletion.")},
-                        },
-                        "document_origin": document_origin,
-                    },
-                    request=request,
+        if integration_pending_deletion_exists:
+            document_origin = "document.origin"
+            if self.active_organization and features.has(
+                "organizations:customer-domains", self.active_organization.organization
+            ):
+                document_origin = (
+                    f'"{generate_organization_url(self.active_organization.organization.slug)}"'
                 )
-
-            try:
-                # We want to limit GitHub integrations to 1 organization
-                installations_exist = OrganizationIntegration.objects.filter(
-                    integration=Integration.objects.get(external_id=request.GET["installation_id"])
-                ).exists()
-
-            except Integration.DoesNotExist:
-                pipeline.bind_state("installation_id", request.GET["installation_id"])
-                return pipeline.next_step()
-
-            if installations_exist:
-                document_origin = "document.origin"
-                if self.active_organization and features.has(
-                    "organizations:customer-domains", self.active_organization.organization
-                ):
-                    document_origin = (
-                        f'"{generate_organization_url(self.active_organization.organization.slug)}"'
-                    )
-                return render_to_response(
-                    "sentry/integrations/github-integration-exists-on-another-org.html",
-                    context={
-                        "payload": {
-                            "success": False,
-                            "data": {
-                                "error": _("Github installed on another Sentry organization.")
-                            },
-                        },
-                        "document_origin": document_origin,
+            return render_to_response(
+                "sentry/integrations/github-integration-failed.html",
+                context={
+                    "error": ERR_INTEGRATION_PENDING_DELETION,
+                    "payload": {
+                        "success": False,
+                        "data": {"error": _("GitHub installation pending deletion.")},
                     },
-                    request=request,
-                )
-            else:
-                # OrganizationIntegration does not exist, but Integration does exist.
-                pipeline.bind_state("installation_id", request.GET["installation_id"])
-                return pipeline.next_step()
+                    "document_origin": document_origin,
+                },
+                request=request,
+            )
 
-        return self.redirect(self.get_app_url())
+        try:
+            # We want to limit GitHub integrations to 1 organization
+            installations_exist = OrganizationIntegration.objects.filter(
+                integration=Integration.objects.get(external_id=request.GET["installation_id"])
+            ).exists()
+
+        except Integration.DoesNotExist:
+            pipeline.bind_state("installation_id", request.GET["installation_id"])
+            return pipeline.next_step()
+
+        if installations_exist:
+            document_origin = "document.origin"
+            if self.active_organization and features.has(
+                "organizations:customer-domains", self.active_organization.organization
+            ):
+                document_origin = (
+                    f'"{generate_organization_url(self.active_organization.organization.slug)}"'
+                )
+            return render_to_response(
+                "sentry/integrations/github-integration-failed.html",
+                context={
+                    "error": ERR_INTEGRATION_EXISTS_ON_ANOTHER_ORG,
+                    "payload": {
+                        "success": False,
+                        "data": {"error": _("Github installed on another Sentry organization.")},
+                    },
+                    "document_origin": document_origin,
+                },
+                request=request,
+            )
+
+        # OrganizationIntegration does not exist, but Integration does exist.
+        pipeline.bind_state("installation_id", request.GET["installation_id"])
+        return pipeline.next_step()

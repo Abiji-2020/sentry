@@ -16,9 +16,9 @@ import QuestionTooltip from 'sentry/components/questionTooltip';
 import {SegmentedControl} from 'sentry/components/segmentedControl';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {IssueCategory, NewQuery} from 'sentry/types';
-import type {SeriesDataUnit} from 'sentry/types/echarts';
-import {Series} from 'sentry/types/echarts';
+import type {NewQuery} from 'sentry/types';
+import {IssueCategory} from 'sentry/types';
+import type {Series, SeriesDataUnit} from 'sentry/types/echarts';
 import {defined} from 'sentry/utils';
 import {tooltipFormatterUsingAggregateOutputType} from 'sentry/utils/discover/charts';
 import {useDiscoverQuery} from 'sentry/utils/discover/discoverQuery';
@@ -34,6 +34,7 @@ import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import {SidebarSpacer} from 'sentry/views/performance/transactionSummary/utils';
 import {AVG_COLOR, ERRORS_COLOR, THROUGHPUT_COLOR} from 'sentry/views/starfish/colours';
 import Chart, {
+  ChartType,
   computeAxisMax,
   useSynchronizeCharts,
 } from 'sentry/views/starfish/components/chart';
@@ -211,7 +212,7 @@ export default function EndpointOverview() {
             }}
             disableXAxis
             definedAxisTicks={2}
-            isLineChart
+            type={ChartType.LINE}
             chartColors={[AVG_COLOR]}
             scatterPlot={sampleData}
             tooltipFormatterOptions={{
@@ -241,7 +242,7 @@ export default function EndpointOverview() {
             height={80}
             data={[throughputResults, tpsLine]}
             loading={loading}
-            isLineChart
+            type={ChartType.LINE}
             definedAxisTicks={2}
             disableXAxis
             chartColors={[THROUGHPUT_COLOR]}
@@ -290,7 +291,7 @@ export default function EndpointOverview() {
               bottom: '0',
             }}
             definedAxisTicks={2}
-            isLineChart
+            type={ChartType.LINE}
             chartColors={[ERRORS_COLOR]}
           />
           <SidebarSpacer />

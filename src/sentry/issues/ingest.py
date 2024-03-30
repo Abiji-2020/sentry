@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from datetime import datetime
 from hashlib import md5
-from typing import Any, Mapping, Optional, Tuple, TypedDict, cast
+from typing import Any, TypedDict, cast
 
 import sentry_sdk
 from django.conf import settings
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 def save_issue_occurrence(
     occurrence_data: IssueOccurrenceData, event: Event
-) -> Tuple[IssueOccurrence, Optional[GroupInfo]]:
+) -> tuple[IssueOccurrence, GroupInfo | None]:
     # Convert occurrence data to `IssueOccurrence`
     occurrence = IssueOccurrence.from_dict(occurrence_data)
     if occurrence.event_id != event.event_id:
@@ -66,7 +67,7 @@ def save_issue_occurrence(
     return occurrence, group_info
 
 
-def process_occurrence_data(data: Mapping[str, Any]) -> None:
+def process_occurrence_data(data: dict[str, Any]) -> None:
     if "fingerprint" not in data:
         return
 
@@ -75,20 +76,21 @@ def process_occurrence_data(data: Mapping[str, Any]) -> None:
 
 
 class IssueArgs(TypedDict):
-    platform: Optional[str]
+    platform: str | None
     message: str
-    level: Optional[int]
+    level: int | None
     culprit: str
     last_seen: datetime
     first_seen: datetime
     active_at: datetime
     type: int
     data: OccurrenceMetadata
-    first_release: Optional[Release]
+    first_release: Release | None
+    priority: int | None
 
 
 def _create_issue_kwargs(
-    occurrence: IssueOccurrence, event: Event, release: Optional[Release]
+    occurrence: IssueOccurrence, event: Event, release: Release | None
 ) -> IssueArgs:
     kwargs: IssueArgs = {
         "platform": event.platform,
@@ -103,6 +105,11 @@ def _create_issue_kwargs(
         "type": occurrence.type.type_id,
         "first_release": release,
         "data": materialize_metadata(occurrence, event),
+        "priority": (
+            occurrence.initial_issue_priority
+            if occurrence.initial_issue_priority is not None
+            else occurrence.type.default_priority
+        ),
     }
     kwargs["data"]["last_received"] = json.datetime_to_str(event.datetime)
     return kwargs
@@ -113,7 +120,7 @@ class OccurrenceMetadata(TypedDict):
     culprit: str
     metadata: Mapping[str, Any]
     title: str
-    location: Optional[str]
+    location: str | None
     last_received: str
 
 
@@ -129,6 +136,7 @@ def materialize_metadata(occurrence: IssueOccurrence, event: Event) -> Occurrenc
     event_metadata.update(event.get_event_metadata())
     event_metadata["title"] = occurrence.issue_title
     event_metadata["value"] = occurrence.subtitle
+    event_metadata["initial_priority"] = occurrence.initial_issue_priority
 
     if occurrence.type == FeedbackGroup:
         # TODO: Should feedbacks be their own event type, so above call to event.get_event_medata
@@ -151,8 +159,8 @@ def materialize_metadata(occurrence: IssueOccurrence, event: Event) -> Occurrenc
 
 @metrics.wraps("issues.ingest.save_issue_from_occurrence")
 def save_issue_from_occurrence(
-    occurrence: IssueOccurrence, event: Event, release: Optional[Release]
-) -> Optional[GroupInfo]:
+    occurrence: IssueOccurrence, event: Event, release: Release | None
+) -> GroupInfo | None:
     project = event.project
     issue_kwargs = _create_issue_kwargs(occurrence, event, release)
     # We need to augment the message with occurrence data here since we can't build a `GroupEvent`
@@ -256,7 +264,7 @@ def send_issue_occurrence_to_eventstream(
     group_event = event.for_group(group_info.group)
     group_event.occurrence = occurrence
 
-    eventstream.insert(
+    eventstream.backend.insert(
         event=group_event,
         is_new=group_info.is_new,
         is_regression=group_info.is_regression,

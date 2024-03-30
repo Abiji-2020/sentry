@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 import math
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from django.conf import settings
 from sentry_redis_tools.clients import RedisCluster, StrictRedis
@@ -46,11 +46,10 @@ DEFAULT_TTL = 48 * 60 * 60  # 2 days
 FALLBACK_TTL = 10 * 60  # 10 minutes; TTL for storing temporary values while we can't query Snuba
 THRESHOLD_KEY = "new-issue-escalation-threshold:{project_id}"
 STALE_DATE_KEY = "new-issue-escalation-threshold-stale-date:v2:{project_id}"
-STRING_TO_DATETIME = "%Y-%m-%d %H:%M:%S.%f"
 TIME_TO_USE_EXISTING_THRESHOLD = 24 * 60 * 60  # 1 day
 
 
-def calculate_threshold(project: Project) -> Optional[float]:
+def calculate_threshold(project: Project) -> float | None:
     """
     Calculates the velocity threshold based on event frequency in the project for the past week.
     """
@@ -150,7 +149,7 @@ def update_threshold(
     project: Project,
     threshold_key: str,
     stale_date_key: str,
-    stale_threshold: Optional[float] = None,
+    stale_threshold: float | None = None,
 ) -> float:
     """
     Runs the calculation for the threshold and saves it and the date it is last updated to Redis.
@@ -174,7 +173,7 @@ def update_threshold(
 
 
 def fallback_to_stale_or_zero(
-    threshold_key: str, stale_date_key: str, stale_threshold: Optional[float]
+    threshold_key: str, stale_date_key: str, stale_threshold: float | None
 ) -> float:
     """
     Returns the backup threshold for when the current threshold can't be calculated. If we have a
@@ -223,7 +222,7 @@ def get_latest_threshold(project: Project) -> float:
     threshold = cache_results[0]
     stale_date = None
     if cache_results[1] is not None:
-        stale_date = datetime.strptime(cache_results[1], STRING_TO_DATETIME)
+        stale_date = datetime.fromisoformat(cache_results[1])
     now = datetime.utcnow()
     if (
         stale_date is None

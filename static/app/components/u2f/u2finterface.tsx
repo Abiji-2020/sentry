@@ -5,7 +5,7 @@ import * as cbor from 'cbor-web';
 import {base64urlToBuffer, bufferToBase64url} from 'sentry/components/u2f/webAuthnHelper';
 import {t, tct} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
-import {ChallengeData} from 'sentry/types';
+import type {ChallengeData} from 'sentry/types';
 
 type TapParams = {
   challenge: string;
@@ -234,7 +234,7 @@ class U2fInterface extends Component<Props, State> {
   bindChallengeElement: React.RefCallback<HTMLInputElement> = ref => {
     this.setState({
       challengeElement: ref,
-      formElement: ref && ref.form,
+      formElement: ref?.form ?? null,
     });
 
     if (ref) {

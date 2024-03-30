@@ -17,23 +17,22 @@ METADATA = {
 
 
 class OpsgenieClientTest(APITestCase):
-    def create_integration(self):
-        integration = self.create_provider_integration(
-            provider="opsgenie", name="test-app", external_id=EXTERNAL_ID, metadata=METADATA
-        )
-        org_integration = integration.add_organization(self.organization, self.user)
-        org_integration.config = {
-            "team_table": [
-                {"id": "team-123", "integration_key": "1234-ABCD", "team": "default team"},
-            ],
-        }
-        org_integration.save()
-
-        return integration
-
     def setUp(self) -> None:
         self.login_as(self.user)
-        self.integration = self.create_integration()
+        self.integration = self.create_integration(
+            organization=self.organization,
+            external_id=EXTERNAL_ID,
+            provider="opsgenie",
+            name="test-app",
+            metadata=METADATA,
+            oi_params={
+                "config": {
+                    "team_table": [
+                        {"id": "team-123", "integration_key": "1234-ABCD", "team": "default team"},
+                    ]
+                },
+            },
+        )
         self.installation = self.integration.get_installation(self.organization.id)
 
     def test_get_client(self):

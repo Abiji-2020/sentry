@@ -5,7 +5,7 @@
  * or used in multiple views.
  */
 import type {getInterval} from 'sentry/components/charts/utils';
-import {MenuListItemProps} from 'sentry/components/menuListItem';
+import type {MenuListItemProps} from 'sentry/components/menuListItem';
 import type {ALLOWED_SCOPES} from 'sentry/constants';
 
 /**
@@ -83,7 +83,7 @@ export enum DataCategory {
 }
 
 /**
- * https://github.com/getsentry/relay/blob/master/relay-common/src/constants.rs
+ * https://github.com/getsentry/relay/blob/master/relay-base-schema/src/data_category.rs
  * Matches the backend singular backend enum directly.
  * For display variations, refer to `DATA_CATEGORY_INFO` rather than manipulating these strings
  */

@@ -3,24 +3,29 @@ import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 
 import {LinkButton} from 'sentry/components/button';
-import GridEditable, {GridColumnHeader} from 'sentry/components/gridEditable';
+import type {GridColumnHeader} from 'sentry/components/gridEditable';
+import GridEditable from 'sentry/components/gridEditable';
 import SortLink from 'sentry/components/gridEditable/sortLink';
 import Link from 'sentry/components/links/link';
-import Pagination, {CursorHandler} from 'sentry/components/pagination';
+import type {CursorHandler} from 'sentry/components/pagination';
+import Pagination from 'sentry/components/pagination';
 import {Tooltip} from 'sentry/components/tooltip';
 import {IconProfiling} from 'sentry/icons/iconProfiling';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
-import {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
-import EventView, {isFieldSortable, MetaType} from 'sentry/utils/discover/eventView';
+import type {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import type {MetaType} from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
+import {isFieldSortable} from 'sentry/utils/discover/eventView';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
-import {fieldAlignment, Sort} from 'sentry/utils/discover/fields';
+import type {Sort} from 'sentry/utils/discover/fields';
+import {fieldAlignment} from 'sentry/utils/discover/fields';
 import {generateProfileFlamechartRoute} from 'sentry/utils/profiling/routes';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import {normalizeUrl} from 'sentry/utils/withDomainRequired';
-import {TableColumn} from 'sentry/views/discover/table/types';
+import type {TableColumn} from 'sentry/views/discover/table/types';
 import {DeviceClassSelector} from 'sentry/views/starfish/views/screens/screenLoadSpans/deviceClassSelector';
 
 type Props = {
@@ -33,6 +38,7 @@ type Props = {
   sort: Sort;
   sortKey: string;
   data?: TableData;
+  footerAlignedPagination?: boolean;
   pageLinks?: string;
   showDeviceClassSelector?: boolean;
 };
@@ -51,6 +57,7 @@ export function EventSamplesTable({
   profileIdKey,
   columnNameMap,
   sort,
+  footerAlignedPagination = false,
 }: Props) {
   const location = useLocation();
   const organization = useOrganization();
@@ -164,10 +171,13 @@ export function EventSamplesTable({
 
   return (
     <Fragment>
-      <Header>
-        {showDeviceClassSelector && <DeviceClassSelector />}
-        <StyledPagination size="xs" pageLinks={pageLinks} onCursor={handleCursor} />
-      </Header>
+      {!footerAlignedPagination && (
+        <Header>
+          {showDeviceClassSelector && <DeviceClassSelector />}
+
+          <StyledPagination size="xs" pageLinks={pageLinks} onCursor={handleCursor} />
+        </Header>
+      )}
       <GridContainer>
         <GridEditable
           isLoading={isLoading}
@@ -185,6 +195,11 @@ export function EventSamplesTable({
           }}
         />
       </GridContainer>
+      <div>
+        {footerAlignedPagination && (
+          <StyledPagination size="xs" pageLinks={pageLinks} onCursor={handleCursor} />
+        )}
+      </div>
     </Fragment>
   );
 }

@@ -1,6 +1,6 @@
 import {CHART_PALETTE} from 'sentry/constants/chartPalette';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types';
 import {SPAN_OP_BREAKDOWN_FIELDS} from 'sentry/utils/discover/fields';
 
 import {getTermHelp, PerformanceTerm} from '../../data';
@@ -357,7 +357,7 @@ export const WIDGET_DEFINITIONS: ({
     chartColor: WIDGET_PALETTE[0],
   },
   [PerformanceWidgetSetting.MOST_IMPROVED]: {
-    title: t('Most Improved'),
+    title: t('Most Improved (P95)'),
     titleTooltip: t(
       'This compares the baseline (%s) of the past with the present.',
       'improved'
@@ -366,7 +366,7 @@ export const WIDGET_DEFINITIONS: ({
     dataType: GenericPerformanceWidgetDataType.TRENDS,
   },
   [PerformanceWidgetSetting.MOST_REGRESSED]: {
-    title: t('Most Regressed'),
+    title: t('Most Regressed (P95)'),
     titleTooltip: t(
       'This compares the baseline (%s) of the past with the present.',
       'regressed'
@@ -375,7 +375,7 @@ export const WIDGET_DEFINITIONS: ({
     dataType: GenericPerformanceWidgetDataType.TRENDS,
   },
   [PerformanceWidgetSetting.MOST_CHANGED]: {
-    title: t('Most Changed'),
+    title: t('Most Changed (P95)'),
     titleTooltip: t(
       'This compares the baseline (%s) of the past with the present.',
       'changed'

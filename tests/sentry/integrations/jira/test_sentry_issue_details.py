@@ -9,8 +9,10 @@ from sentry.integrations.jira.views import UNABLE_TO_VERIFY_INSTALLATION
 from sentry.integrations.utils import AtlassianConnectValidationError
 from sentry.models.group import Group
 from sentry.models.grouplink import GroupLink
+from sentry.models.integrations import Integration
 from sentry.models.integrations.external_issue import ExternalIssue
 from sentry.testutils.cases import APITestCase
+from sentry.testutils.silo import assume_test_silo_mode_of
 from sentry.testutils.skips import requires_snuba
 from sentry.utils.http import absolute_uri
 
@@ -52,7 +54,8 @@ class JiraIssueHookTest(APITestCase):
                 "shared_secret": "a-super-secret-key-from-atlassian",
             },
         )
-        self.integration.add_organization(self.organization, self.user)
+        with assume_test_silo_mode_of(Integration):
+            self.integration.add_organization(self.organization, self.user)
 
         self.external_issue = ExternalIssue.objects.create(
             organization_id=group.organization.id,

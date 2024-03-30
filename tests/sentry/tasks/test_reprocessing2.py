@@ -45,6 +45,7 @@ def _create_event_attachment(evt, type):
         file_id=file.id,
         type=file.type,
         name="foo",
+        size=file.size,
     )
 
 
@@ -127,7 +128,7 @@ def test_basic(
         tombstone_calls.append((args, kwargs))
         old_tombstone_fn(*args, **kwargs)
 
-    monkeypatch.setattr("sentry.eventstream.tombstone_events_unsafe", tombstone_called)
+    monkeypatch.setattr("sentry.eventstream.backend.tombstone_events_unsafe", tombstone_called)
 
     abs_count = 0
 
@@ -435,6 +436,7 @@ def test_nodestore_missing(
     remaining_events,
     django_cache,
 ):
+
     event_id = process_and_save({"message": "hello world", "platform": "python"})
     event = eventstore.backend.get_event_by_id(default_project.id, event_id)
     old_group = event.group
@@ -463,7 +465,7 @@ def test_nodestore_missing(
             GroupRedirect.objects.get(previous_group_id=old_group.id).group_id == new_event.group_id
         )
 
-    assert mock_logger.error.called_with("reprocessing2.unprocessed_event.not_found")
+    mock_logger.error.assert_called_once_with("reprocessing2.%s", "unprocessed_event.not_found")
 
 
 @django_db_all
@@ -515,11 +517,17 @@ def test_apply_new_fingerprinting_rules(
 
     assert is_group_finished(event1.group_id)
 
-    # Events should now be in different groups:
+    # Events should now be in different groups
     event1 = eventstore.backend.get_event_by_id(default_project.id, event_id1)
     event2 = eventstore.backend.get_event_by_id(default_project.id, event_id2)
+    # Both events end up with new group ids because the entire group is reprocessed, so even though
+    # nothing has changed for event2, it's still put into a new group
     assert event1.group.id != original_issue_id
+    assert event2.group.id != original_issue_id
     assert event1.group.id != event2.group.id
+    # The group `message` value is taken from the `search_message` attribute, which is basically
+    # just all the event's `metadata` entries shoved together (so that they can all be searhed on -
+    # hence the name). Thus group1 includes both the event's message and its title.
     assert event1.group.message == "hello world 1 HW1"
     assert event2.group.message == "hello world 2"
 
@@ -589,7 +597,7 @@ def test_apply_new_stack_trace_rules(
     original_issue_id = event1.group.id
 
     with mock.patch(
-        "sentry.event_manager.get_grouping_config_dict_for_project",
+        "sentry.grouping.ingest.get_grouping_config_dict_for_project",
         return_value={
             "id": DEFAULT_GROUPING_CONFIG,
             "enhancements": Enhancements.from_config_string(

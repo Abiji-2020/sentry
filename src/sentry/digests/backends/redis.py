@@ -1,8 +1,10 @@
 import logging
 import time
+from collections.abc import Iterable
 from contextlib import contextmanager
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any
 
+import rb
 from rb.clients import LocalClient
 from redis.exceptions import ResponseError
 
@@ -70,7 +72,9 @@ class RedisBackend(Backend):
     """
 
     def __init__(self, **options: Any) -> None:
-        self.cluster, options = get_cluster_from_options("SENTRY_DIGESTS_OPTIONS", options)
+        cluster, options = get_cluster_from_options("SENTRY_DIGESTS_OPTIONS", options)
+        assert isinstance(cluster, rb.Cluster)
+        self.cluster = cluster
         self.locks = LockManager(RedisLockBackend(self.cluster))
 
         self.namespace = options.pop("namespace", "d")
@@ -103,9 +107,9 @@ class RedisBackend(Backend):
         self,
         key: str,
         record: Record,
-        increment_delay: Optional[int] = None,
-        maximum_delay: Optional[int] = None,
-        timestamp: Optional[float] = None,
+        increment_delay: int | None = None,
+        maximum_delay: int | None = None,
+        timestamp: float | None = None,
     ) -> bool:
         if timestamp is None:
             timestamp = time.time()
@@ -141,16 +145,14 @@ class RedisBackend(Backend):
 
     def __schedule_partition(
         self, host: int, deadline: float, timestamp: float
-    ) -> Iterable[Tuple[bytes, float]]:
+    ) -> Iterable[tuple[bytes, float]]:
         return script(
             self.cluster.get_local_client(host),
             ["-"],
             ["SCHEDULE", self.namespace, self.ttl, timestamp, deadline],
         )
 
-    def schedule(
-        self, deadline: float, timestamp: Optional[float] = None
-    ) -> Iterable[ScheduleEntry]:
+    def schedule(self, deadline: float, timestamp: float | None = None) -> Iterable[ScheduleEntry]:
         if timestamp is None:
             timestamp = time.time()
 
@@ -172,7 +174,7 @@ class RedisBackend(Backend):
             ["MAINTENANCE", self.namespace, self.ttl, timestamp, deadline],
         )
 
-    def maintenance(self, deadline: float, timestamp: Optional[float] = None) -> None:
+    def maintenance(self, deadline: float, timestamp: float | None = None) -> None:
         if timestamp is None:
             timestamp = time.time()
 
@@ -188,7 +190,7 @@ class RedisBackend(Backend):
 
     @contextmanager
     def digest(
-        self, key: str, minimum_delay: Optional[int] = None, timestamp: Optional[float] = None
+        self, key: str, minimum_delay: int | None = None, timestamp: float | None = None
     ) -> Any:
         if minimum_delay is None:
             minimum_delay = self.minimum_delay
@@ -248,7 +250,7 @@ class RedisBackend(Backend):
                 + [record.key for record in records],
             )
 
-    def delete(self, key: str, timestamp: Optional[float] = None) -> None:
+    def delete(self, key: str, timestamp: float | None = None) -> None:
         if timestamp is None:
             timestamp = time.time()
 

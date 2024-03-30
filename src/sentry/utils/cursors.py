@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Iterator, Protocol, Sequence, Tuple, TypeVar, Union
+from collections.abc import Callable, Iterator, Sequence
+from typing import Any, Protocol, TypeVar, Union
 
 from sentry.utils.json import JSONData
 
@@ -111,7 +112,7 @@ class CursorResult(Sequence[T]):
 
 def _build_next_values(
     cursor: Cursor, results: Sequence[T], key: KeyCallable, limit: int, is_desc: bool
-) -> Tuple[CursorValue, int, bool]:
+) -> tuple[CursorValue, int, bool]:
     value = cursor.value
     offset = cursor.offset
     is_prev = cursor.is_prev
@@ -159,8 +160,8 @@ def _build_next_values(
     for result in result_iter:
         result_value = key(result)
 
-        is_larger = result_value >= next_value  # type: ignore
-        is_smaller = result_value <= next_value  # type: ignore
+        is_larger = result_value >= next_value  # type: ignore[operator]
+        is_smaller = result_value <= next_value  # type: ignore[operator]
 
         if (is_desc and is_smaller) or (not is_desc and is_larger):
             next_offset += 1
@@ -172,7 +173,7 @@ def _build_next_values(
 
 def _build_prev_values(
     cursor: Cursor, results: Sequence[T], key: KeyCallable, limit: int, is_desc: bool
-) -> Tuple[CursorValue, int, bool]:
+) -> tuple[CursorValue, int, bool]:
     value = cursor.value
     offset = cursor.offset
     is_prev = cursor.is_prev
@@ -228,8 +229,8 @@ def _build_prev_values(
     for result in result_iter:
         result_value = key(result, for_prev=True)
 
-        is_larger = result_value >= prev_value  # type: ignore
-        is_smaller = result_value <= prev_value  # type: ignore
+        is_larger = result_value >= prev_value  # type: ignore[operator]
+        is_smaller = result_value <= prev_value  # type: ignore[operator]
 
         # Note that the checks are reversed here as a prev query has
         # it's ordering reversed.

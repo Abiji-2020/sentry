@@ -11,7 +11,7 @@ import usePageFilters from 'sentry/utils/usePageFilters';
 import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 
 import MonitorForm from './components/monitorForm';
-import {Monitor} from './types';
+import type {Monitor} from './types';
 
 function CreateMonitor() {
   const organization = useOrganization();
@@ -29,7 +29,7 @@ function CreateMonitor() {
     };
     browserHistory.push(
       normalizeUrl({
-        pathname: `/organizations/${orgSlug}/crons/${data.slug}/`,
+        pathname: `/organizations/${orgSlug}/crons/${data.project.slug}/${data.slug}/`,
         query: endpointOptions.query,
       })
     );

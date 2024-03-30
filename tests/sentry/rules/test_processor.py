@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest import mock
 from unittest.mock import patch
 
@@ -20,7 +20,6 @@ from sentry.rules.filters.base import EventFilter
 from sentry.rules.processor import RuleProcessor
 from sentry.testutils.cases import TestCase
 from sentry.testutils.helpers import install_slack
-from sentry.testutils.silo import region_silo_test
 from sentry.testutils.skips import requires_snuba
 from sentry.utils import json
 from sentry.utils.safe import safe_execute
@@ -44,7 +43,6 @@ class MockConditionTrue(EventCondition):
         return True
 
 
-@region_silo_test
 class RuleProcessorTest(TestCase):
     def setUp(self):
         event = self.store_event(data={}, project_id=self.project.id)
@@ -389,7 +387,6 @@ class MockFilterFalse(EventFilter):
         return False
 
 
-@region_silo_test
 class RuleProcessorTestFilters(TestCase):
     MOCK_SENTRY_RULES_WITH_FILTERS = (
         "sentry.mail.actions.NotifyEmailAction",
@@ -626,7 +623,7 @@ class RuleProcessorTestFilters(TestCase):
         release = self.create_release(
             project=self.project,
             version="2021-02.newRelease",
-            date_added=datetime(2020, 9, 1, 3, 8, 24, 880386),
+            date_added=datetime(2020, 9, 1, 3, 8, 24, 880386, tzinfo=UTC),
             environments=[self.environment],
         )
 

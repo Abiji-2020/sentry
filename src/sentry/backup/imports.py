@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import BinaryIO, Iterator, Optional, Tuple, Type
+from typing import BinaryIO
 from uuid import uuid4
 
 from django.core import serializers
@@ -46,6 +47,24 @@ __all__ = (
     "import_in_global_scope",
 )
 
+# We have to be careful when removing fields from our model schemas, since exports created using
+# the old-but-still-in-the-support-window versions could have those fields set in the data they
+# provide. This dict serves as a map of all fields that have been deleted on HEAD but are still
+# valid in at least one of the versions we support. For example, since our current version
+# support window is two minor versions back, if we delete a field at version 24.5.N, we must
+# include an entry in this map for that field until that version is out of the support window
+# (in this case, we can remove shim once version 24.7.0 is released).
+#
+# NOTE TO FUTURE EDITORS: please keep the `DELETED_FIELDS` dict, and the subsequent `if` clause,
+# around even if the dict is empty, to ensure that there is a ready place to pop shims into. For
+# each entry in this dict, please leave a TODO comment pointed to a github issue for removing
+# the shim, noting in the comment which self-hosted release will trigger the removal.
+DELETED_FIELDS: dict[
+    str, set[str]
+] = {  # TODO(getsentry/sentry#66247): Remove once self-hosted 24.4.0 is released.
+    "sentry.team": {"org_role"}
+}
+
 
 class ImportingError(Exception):
     def __init__(self, context: RpcImportError) -> None:
@@ -58,7 +77,7 @@ def _clear_model_tables_before_import():
     for model in reversed:
         using = router.db_for_write(model)
         manager = model.with_deleted if issubclass(model, ParanoidModel) else model.objects
-        manager.all().delete()  # type: ignore
+        manager.all().delete()  # type: ignore[attr-defined]
 
         # TODO(getsentry/team-ospo#190): Remove the "Node" kludge below in favor of a more permanent
         # solution.
@@ -134,6 +153,21 @@ def _import(
         if decryptor is not None
         else src.read().decode("utf-8")
     )
+
+    if len(DELETED_FIELDS) > 0:
+        # Parse the content JSON and remove and fields that we have marked for deletion in the
+        # function.
+        shimmed_models = set(DELETED_FIELDS.keys())
+        content_as_json = json.loads(content)  # type: ignore[arg-type]
+        for json_model in content_as_json:
+            if json_model["model"] in shimmed_models:
+                fields_to_remove = DELETED_FIELDS[json_model["model"]]
+                for field in fields_to_remove:
+                    json_model["fields"].pop(field, None)
+
+        # Return the content to byte form, as that is what the Django deserializer expects.
+        content = json.dumps(content_as_json)
+
     filters = []
     if filter_by is not None:
         filters.append(filter_by)
@@ -207,11 +241,11 @@ def _import(
 
     # The input JSON blob should already be ordered by model kind. We simply break up 1 JSON blob
     # with N model kinds into N json blobs with 1 model kind each.
-    def yield_json_models(content) -> Iterator[Tuple[NormalizedModelName, str]]:
+    def yield_json_models(content) -> Iterator[tuple[NormalizedModelName, str]]:
         # TODO(getsentry#team-ospo/190): Better error handling for unparsable JSON.
         models = json.loads(content)
-        last_seen_model_name: Optional[NormalizedModelName] = None
-        batch: list[Type[Model]] = []
+        last_seen_model_name: NormalizedModelName | None = None
+        batch: list[type[Model]] = []
         for model in models:
             model_name = NormalizedModelName(model["model"])
             if last_seen_model_name != model_name:

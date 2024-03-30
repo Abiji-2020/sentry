@@ -1,9 +1,11 @@
 import {StepType} from 'sentry/components/onboarding/gettingStartedDoc/step';
-import {
+import type {
   Docs,
   DocsParams,
   OnboardingConfig,
 } from 'sentry/components/onboarding/gettingStartedDoc/types';
+import {CrashReportWebApiOnboarding} from 'sentry/components/onboarding/gettingStartedDoc/utils/feedbackOnboarding';
+import {getRubyMetricsOnboarding} from 'sentry/components/onboarding/gettingStartedDoc/utils/metricsOnboarding';
 import {tct} from 'sentry/locale';
 
 type Params = DocsParams;
@@ -67,6 +69,8 @@ const onboarding: OnboardingConfig = {
 
 const docs: Docs = {
   onboarding,
+  customMetricsOnboarding: getRubyMetricsOnboarding(),
+  crashReportOnboarding: CrashReportWebApiOnboarding,
 };
 
 export default docs;

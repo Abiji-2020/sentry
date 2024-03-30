@@ -7,10 +7,11 @@ import ActorAvatar from 'sentry/components/avatar/actorAvatar';
 import TeamAvatar from 'sentry/components/avatar/teamAvatar';
 import {openConfirmModal} from 'sentry/components/confirm';
 import DropdownAutoComplete from 'sentry/components/dropdownAutoComplete';
+import type {ItemsBeforeFilter} from 'sentry/components/dropdownAutoComplete/types';
 import DropdownBubble from 'sentry/components/dropdownBubble';
-import {DropdownMenu, MenuItemProps} from 'sentry/components/dropdownMenu';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import ErrorBoundary from 'sentry/components/errorBoundary';
-import Highlight from 'sentry/components/highlight';
 import IdBadge from 'sentry/components/idBadge';
 import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
@@ -37,7 +38,8 @@ import {
   AlertRuleTriggerType,
 } from 'sentry/views/alerts/rules/metric/types';
 
-import {CombinedAlertType, CombinedMetricIssueAlerts, IncidentStatus} from '../../types';
+import type {CombinedMetricIssueAlerts} from '../../types';
+import {CombinedAlertType, IncidentStatus} from '../../types';
 import {isIssueAlert} from '../../utils';
 
 type Props = {
@@ -158,8 +160,8 @@ function RuleListRow({
         trigger?.label === AlertRuleTriggerType.CRITICAL
           ? 'errorText'
           : trigger?.label === AlertRuleTriggerType.WARNING
-          ? 'warningText'
-          : 'successText';
+            ? 'warningText'
+            : 'successText';
       iconDirection = rule.thresholdType === AlertRuleThresholdType.ABOVE ? 'up' : 'down';
     } else {
       // Use the Resolved threshold type, which is opposite of Critical
@@ -255,12 +257,12 @@ function RuleListRow({
     onOwnerChange(slug, rule, ownerValue);
   }
 
-  const unassignedOption = {
+  const unassignedOption: ItemsBeforeFilter[number] = {
     value: '',
-    label: () => (
+    label: (
       <MenuItemWrapper>
-        <StyledIconUser size="md" />
-        {t('Unassigned')}
+        <PaddedIconUser size="lg" />
+        <Label>{t('Unassigned')}</Label>
       </MenuItemWrapper>
     ),
     searchKey: 'unassigned',
@@ -273,17 +275,15 @@ function RuleListRow({
     return userTeams.some(team => team.id === projTeam.id);
   });
   const dropdownTeams = filteredProjectTeams
-    .map((team, idx) => ({
+    .map<ItemsBeforeFilter[number]>((team, idx) => ({
       value: team.id,
       searchKey: team.slug,
-      label: ({inputValue}) => (
+      label: (
         <MenuItemWrapper data-test-id="assignee-option" key={idx}>
           <IconContainer>
             <TeamAvatar team={team} size={24} />
           </IconContainer>
-          <Label>
-            <Highlight text={inputValue}>{`#${team.slug}`}</Highlight>
-          </Label>
+          <Label>#{team.slug}</Label>
         </MenuItemWrapper>
       ),
     }))
@@ -308,7 +308,7 @@ function RuleListRow({
     />
   ) : (
     <Tooltip isHoverable skipWrapper title={t('Unassigned')}>
-      <StyledIconUser size="md" color="gray400" />
+      <PaddedIconUser size="lg" color="gray400" />
     </Tooltip>
   );
 
@@ -495,9 +495,8 @@ const StyledChevron = styled(IconChevron)`
   margin-left: ${space(1)};
 `;
 
-const StyledIconUser = styled(IconUser)`
-  /* We need this to center with Avatar */
-  margin-right: 2px;
+const PaddedIconUser = styled(IconUser)`
+  padding: ${space(0.25)};
 `;
 
 const IconContainer = styled('div')`

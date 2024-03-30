@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, ClassVar, Iterable, List, Optional, Tuple
+from collections.abc import Callable, Iterable
+from typing import Any, ClassVar
 
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
@@ -23,7 +24,11 @@ from sentry.models.apiapplication import ApiApplication
 from sentry.models.apikey import ApiKey
 from sentry.models.apitoken import ApiToken
 from sentry.models.integrations.sentry_app import SentryApp
-from sentry.models.orgauthtoken import OrgAuthToken
+from sentry.models.orgauthtoken import (
+    OrgAuthToken,
+    is_org_auth_token_auth,
+    update_org_auth_token_last_used,
+)
 from sentry.models.projectkey import ProjectKey
 from sentry.models.relay import Relay
 from sentry.models.user import User
@@ -100,7 +105,7 @@ def is_static_relay(request):
     return relay_info is not None
 
 
-def relay_from_id(request, relay_id) -> Tuple[Optional[Relay], bool]:
+def relay_from_id(request, relay_id) -> tuple[Relay | None, bool]:
     """
     Tries to find a Relay for a given id
     If the id is statically registered than no DB access will be done.
@@ -131,6 +136,14 @@ def relay_from_id(request, relay_id) -> Tuple[Optional[Relay], bool]:
             return None, False  # no Relay found
 
 
+def update_token_access_record(auth: object):
+    """
+    Perform updates to token models for security purposes (i.e. 'date_last_used')
+    """
+    if is_org_auth_token_auth(auth):
+        update_org_auth_token_last_used(auth, [])
+
+
 class QuietBasicAuthentication(BasicAuthentication):
     def authenticate_header(self, request: Request) -> str:
         return 'xBasic realm="%s"' % self.www_authenticate_realm
@@ -141,7 +154,7 @@ class QuietBasicAuthentication(BasicAuthentication):
         request_auth: Any,
         entity_id_tag: str | None = None,
         **tags,
-    ) -> Tuple[RpcUser | AnonymousUser, AuthenticatedToken | None]:
+    ) -> tuple[RpcUser | AnonymousUser, AuthenticatedToken | None]:
         if isinstance(user, int):
             user = user_service.get_user(user_id=user)
         elif isinstance(user, User):
@@ -320,8 +333,9 @@ class UserAuthTokenAuthentication(StandardAuthentication):
 
         if not token:
             if SiloMode.get_current_mode() == SiloMode.REGION:
-                atr = token = ApiTokenReplica.objects.filter(token=token_str).last()
-                if not atr:
+                try:
+                    atr = token = ApiTokenReplica.objects.get(token=token_str)
+                except ApiTokenReplica.DoesNotExist:
                     raise AuthenticationFailed("Invalid token")
                 user = user_service.get_user(user_id=atr.user_id)
                 application_is_inactive = not atr.application_is_active
@@ -378,11 +392,12 @@ class OrgAuthTokenAuthentication(StandardAuthentication):
         token_hashed = hash_token(token_str)
 
         if SiloMode.get_current_mode() == SiloMode.REGION:
-            token = OrgAuthTokenReplica.objects.filter(
-                token_hashed=token_hashed,
-                date_deactivated__isnull=True,
-            ).last()
-            if token is None:
+            try:
+                token = OrgAuthTokenReplica.objects.get(
+                    token_hashed=token_hashed,
+                    date_deactivated__isnull=True,
+                )
+            except OrgAuthTokenReplica.DoesNotExist:
                 raise AuthenticationFailed("Invalid org token")
         else:
             try:
@@ -437,7 +452,7 @@ class RpcSignatureAuthentication(StandardAuthentication):
 
     token_name = b"rpcsignature"
 
-    def accepts_auth(self, auth: List[bytes]) -> bool:
+    def accepts_auth(self, auth: list[bytes]) -> bool:
         if not auth or len(auth) < 2:
             return False
         return auth[0].lower() == self.token_name

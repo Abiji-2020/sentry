@@ -2,12 +2,13 @@ import {Fragment, useEffect, useState} from 'react';
 import styled from '@emotion/styled';
 import beautify from 'js-beautify';
 
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import Alert from 'sentry/components/alert';
 import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
 import FeatureBadge from 'sentry/components/featureBadge';
 import {GithubFeedbackButton} from 'sentry/components/githubFeedbackButton';
 import {Flex} from 'sentry/components/profiling/flex';
+import {StaticReplayPreferences} from 'sentry/components/replays/preferences/replayPreferences';
 import {
   Provider as ReplayContextProvider,
   useReplayContext,
@@ -17,8 +18,8 @@ import SplitDiff from 'sentry/components/splitDiff';
 import {TabList} from 'sentry/components/tabs';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import ReplayReader from 'sentry/utils/replays/replayReader';
+import type {Organization} from 'sentry/types';
+import type ReplayReader from 'sentry/utils/replays/replayReader';
 import {OrganizationContext} from 'sentry/views/organizationContext';
 
 interface Props extends ModalRenderProps {
@@ -26,6 +27,11 @@ interface Props extends ModalRenderProps {
   organization: Organization;
   replay: null | ReplayReader;
   rightTimestamp: number;
+}
+
+enum Tab {
+  VISUAL = 'visual',
+  HTML = 'html',
 }
 
 const MAX_CLAMP_TO_START = 2000;
@@ -40,7 +46,7 @@ export default function ReplayComparisonModal({
 }: Props) {
   const fetching = false;
 
-  const [activeTab, setActiveTab] = useState<'visual' | 'html'>('html');
+  const [activeTab, setActiveTab] = useState<Tab>(Tab.HTML);
 
   const [leftBody, setLeftBody] = useState(null);
   const [rightBody, setRightBody] = useState(null);
@@ -89,53 +95,73 @@ export default function ReplayComparisonModal({
         <Flex gap={space(1)} column>
           <TabList
             selectedKey={activeTab}
-            onSelectionChange={tab => setActiveTab(tab as 'visual' | 'html')}
+            onSelectionChange={tab => setActiveTab(tab as Tab)}
           >
-            <TabList.Item key="html">Html Diff</TabList.Item>
-            <TabList.Item key="visual">Visual Diff</TabList.Item>
+            <TabList.Item key={Tab.HTML}>{t('Html Diff')}</TabList.Item>
+            <TabList.Item key={Tab.VISUAL}>{t('Visual Diff')}</TabList.Item>
           </TabList>
+
           <Flex
             gap={space(2)}
+            column
             style={{
               // Using css to hide since the splitdiff uses the html from the iframes
               // TODO: This causes a bit of a flash when switching tabs
-              display: activeTab === 'visual' ? undefined : 'none',
+              display: activeTab === Tab.VISUAL ? undefined : 'none',
             }}
           >
-            <ReplayContextProvider
-              isFetching={fetching}
-              replay={replay}
-              initialTimeOffsetMs={{offsetMs: startOffset}}
-            >
-              <ComparisonSideWrapper id="leftSide">
-                <ReplaySide
-                  selector="#leftSide iframe"
-                  expectedTime={startOffset}
-                  onLoad={setLeftBody}
-                />
-              </ComparisonSideWrapper>
-            </ReplayContextProvider>
-            <ReplayContextProvider
-              isFetching={fetching}
-              replay={replay}
-              initialTimeOffsetMs={{offsetMs: rightTimestamp + 1}}
-            >
-              <ComparisonSideWrapper id="rightSide">
-                <ReplaySide
-                  selector="#rightSide iframe"
-                  expectedTime={rightTimestamp + 1}
-                  onLoad={setRightBody}
-                />
-              </ComparisonSideWrapper>
-            </ReplayContextProvider>
+            <DiffHeader>
+              <Flex flex="1" align="center">
+                {t('Before Hydration')}
+              </Flex>
+              <Flex flex="1" align="center">
+                {t('After Hydration')}
+              </Flex>
+            </DiffHeader>
+            <ReplayGrid>
+              <ReplayContextProvider
+                analyticsContext="replay_comparison_modal_left"
+                initialTimeOffsetMs={{offsetMs: startOffset}}
+                isFetching={fetching}
+                prefsStrategy={StaticReplayPreferences}
+                replay={replay}
+              >
+                <ComparisonSideWrapper id="leftSide">
+                  <ReplaySide
+                    selector="#leftSide iframe"
+                    expectedTime={startOffset}
+                    onLoad={setLeftBody}
+                  />
+                </ComparisonSideWrapper>
+              </ReplayContextProvider>
+              <ReplayContextProvider
+                analyticsContext="replay_comparison_modal_right"
+                initialTimeOffsetMs={{offsetMs: rightTimestamp + 1}}
+                isFetching={fetching}
+                prefsStrategy={StaticReplayPreferences}
+                replay={replay}
+              >
+                <ComparisonSideWrapper id="rightSide">
+                  {rightTimestamp > 0 ? (
+                    <ReplaySide
+                      selector="#rightSide iframe"
+                      expectedTime={rightTimestamp + 1}
+                      onLoad={setRightBody}
+                    />
+                  ) : (
+                    <div />
+                  )}
+                </ComparisonSideWrapper>
+              </ReplayContextProvider>
+            </ReplayGrid>
           </Flex>
-          {activeTab === 'html' && leftBody && rightBody ? (
+          {activeTab === Tab.HTML ? (
             <Fragment>
               <DiffHeader>
                 <Flex flex="1" align="center">
                   {t('Before Hydration')}
                   <CopyToClipboardButton
-                    text={leftBody}
+                    text={leftBody ?? ''}
                     size="xs"
                     iconSize="xs"
                     borderless
@@ -145,7 +171,7 @@ export default function ReplayComparisonModal({
                 <Flex flex="1" align="center">
                   {t('After Hydration')}
                   <CopyToClipboardButton
-                    text={rightBody}
+                    text={rightBody ?? ''}
                     size="xs"
                     iconSize="xs"
                     borderless
@@ -154,7 +180,7 @@ export default function ReplayComparisonModal({
                 </Flex>
               </DiffHeader>
               <SplitDiffScrollWrapper>
-                <SplitDiff base={leftBody} target={rightBody} type="words" />
+                <SplitDiff base={leftBody ?? ''} target={rightBody ?? ''} type="words" />
               </SplitDiffScrollWrapper>
             </Fragment>
           ) : null}
@@ -180,7 +206,7 @@ function ReplaySide({expectedTime, selector, onLoad}) {
             })
           );
         }
-      }, 0);
+      }, 50);
     }
   }, [currentTime, expectedTime, selector, onLoad]);
   return <ReplayPlayer isPreview />;
@@ -212,9 +238,18 @@ const DiffHeader = styled('div')`
   font-weight: 600;
   line-height: 1.2;
 
+  div {
+    height: 28px; /* div with and without buttons inside are the same height */
+  }
+
   div:last-child {
     padding-left: ${space(2)};
   }
+`;
+
+const ReplayGrid = styled('div')`
+  display: grid;
+  grid-template-columns: 1fr 1fr;
 `;
 
 const StyledParagraph = styled('p')`

@@ -1,5 +1,5 @@
 import {browserHistory} from 'react-router';
-import {Location, Query} from 'history';
+import type {Location, Query} from 'history';
 import {OrganizationFixture} from 'sentry-fixture/organization';
 import {ProjectFixture} from 'sentry-fixture/project';
 
@@ -237,8 +237,8 @@ describe('Performance > Web Vitals', function () {
       );
     });
 
-    it.each(vitals)('Renders %s', function (vital) {
-      expect(screen.getByText(vital.heading)).toBeInTheDocument();
+    it.each(vitals)('Renders %s', async function (vital) {
+      expect(await screen.findByText(vital.heading)).toBeInTheDocument();
       expect(screen.getByText(vital.baseline)).toBeInTheDocument();
     });
   });

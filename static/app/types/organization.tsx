@@ -1,6 +1,6 @@
-import {Project} from 'sentry/types/project';
-import {AggregationOutputType} from 'sentry/utils/discover/fields';
-import {DiscoverDatasets} from 'sentry/utils/discover/types';
+import type {Project} from 'sentry/types/project';
+import type {AggregationOutputType} from 'sentry/utils/discover/fields';
+import type {DiscoverDatasets} from 'sentry/utils/discover/types';
 
 import type {Actor, Avatar, ObjectStatus, Scope} from './core';
 import type {OrgExperiments} from './experiments';
@@ -41,6 +41,7 @@ export interface OrganizationSummary {
  */
 export interface Organization extends OrganizationSummary {
   access: Scope[];
+  aggregatedDataConsent: boolean;
   alertsMemberWrite: boolean;
   allowJoinRequests: boolean;
   allowSharedIssues: boolean;
@@ -53,6 +54,7 @@ export interface Organization extends OrganizationSummary {
   enhancedPrivacy: boolean;
   eventsMemberAdmin: boolean;
   experiments: Partial<OrgExperiments>;
+  genAIConsent: boolean;
   isDefault: boolean;
   isDynamicallySampled: boolean;
   onboardingTasks: OnboardingTaskStatus[];
@@ -76,6 +78,7 @@ export interface Organization extends OrganizationSummary {
   desiredSampleRate?: number | null;
   effectiveSampleRate?: number | null;
   orgRole?: string;
+  planSampleRate?: number | null;
 }
 
 export interface DetailedOrganization extends Organization {
@@ -98,7 +101,6 @@ export interface Team {
   name: string;
   slug: string;
   teamRole: string | null;
-  orgRole?: string | null;
 }
 
 export interface DetailedTeam extends Team {
@@ -173,8 +175,6 @@ export interface Member {
    * User may be null when the member represents an invited member
    */
   user: User | null;
-  // TODO: Move to global store
-  groupOrgRoles?: {role: OrgRole; teamSlug: string}[];
 }
 
 /**

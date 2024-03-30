@@ -1,10 +1,11 @@
 """
 Utilities related to proxying a request to a region silo
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Iterator
+from collections.abc import Iterator
 from urllib.parse import urljoin
 from wsgiref.util import is_hop_by_hop
 
@@ -33,6 +34,16 @@ from sentry.types.region import (
 from sentry.utils import metrics
 
 logger = logging.getLogger(__name__)
+
+# Endpoints that handle uploaded files have higher timeouts configured
+# and we need to honor those timeouts when proxying.
+# See frontend/templates/sites-enabled/sentry.io in getsentry/ops
+ENDPOINT_TIMEOUT_OVERRIDE = {
+    "sentry-api-0-chunk-upload": 90.0,
+    "sentry-api-0-organization-release-files": 90.0,
+    "sentry-api-0-project-release-files": 90.0,
+    "sentry-api-0-dsym-files": 90.0,
+}
 
 # stream 0.5 MB at a time
 PROXY_CHUNK_SIZE = 512 * 1024
@@ -144,7 +155,13 @@ def proxy_region_request(
     assert request.method is not None
     query_params = request.GET
 
+    timeout = ENDPOINT_TIMEOUT_OVERRIDE.get(url_name, settings.GATEWAY_PROXY_TIMEOUT)
     metric_tags = {"region": region.name, "url_name": url_name}
+
+    # XXX: See sentry.testutils.pytest.sentry for more information
+    if settings.APIGATEWAY_PROXY_SKIP_RELAY and request.path.startswith("/api/0/relays/"):
+        return StreamingHttpResponse(streaming_content="relay proxy skipped", status=404)
+
     try:
         with metrics.timer("apigateway.proxy_request.duration", tags=metric_tags):
             resp = external_request(
@@ -154,7 +171,11 @@ def proxy_region_request(
                 params=dict(query_params) if query_params is not None else None,
                 data=_body_with_length(request),
                 stream=True,
-                timeout=settings.GATEWAY_PROXY_TIMEOUT,
+                timeout=timeout,
+                # By default, external_request will resolve any redirects for any verb except for HEAD.
+                # We explicitly disable this behavior to avoid misrepresenting the original sentry.io request with the
+                # body response of the redirect.
+                allow_redirects=False,
             )
     except Timeout:
         # remote silo timeout. Use DRF timeout instead

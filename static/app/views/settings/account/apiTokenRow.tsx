@@ -6,31 +6,24 @@ import PanelItem from 'sentry/components/panels/panelItem';
 import {IconSubtract} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {InternalAppApiToken} from 'sentry/types';
+import type {InternalAppApiToken} from 'sentry/types';
 import getDynamicText from 'sentry/utils/getDynamicText';
 import {tokenPreview} from 'sentry/views/settings/organizationAuthTokens';
 
 type Props = {
   onRemove: (token: InternalAppApiToken) => void;
   token: InternalAppApiToken;
+  tokenPrefix?: string;
 };
 
-// TODO: After the BE portion of code changes have been released, remove the conditional rendering of the token.
-// We are currently doing the conditional logic to do safe blue/green deploys and handle contract changes.
-function ApiTokenRow({token, onRemove}: Props) {
+function ApiTokenRow({token, onRemove, tokenPrefix = ''}: Props) {
   return (
     <StyledPanelItem>
       <Controls>
-        <TokenPreview aria-label={t('Token preview')}>
-          {tokenPreview(
-            getDynamicText({
-              value: token.tokenLastCharacters,
-              fixed: 'ABCD',
-            })
-          )}
-        </TokenPreview>
+        {token.name ? token.name : ''}
         <ButtonWrapper>
           <Button
+            data-test-id="token-delete"
             onClick={() => onRemove(token)}
             icon={<IconSubtract isCircled size="xs" />}
           >
@@ -40,6 +33,18 @@ function ApiTokenRow({token, onRemove}: Props) {
       </Controls>
 
       <Details>
+        <TokenWrapper>
+          <Heading>{t('Token')}</Heading>
+          <TokenPreview aria-label={t('Token preview')}>
+            {tokenPreview(
+              getDynamicText({
+                value: token.tokenLastCharacters,
+                fixed: 'ABCD',
+              }),
+              tokenPrefix
+            )}
+          </TokenPreview>
+        </TokenWrapper>
         <ScopesWrapper>
           <Heading>{t('Scopes')}</Heading>
           <ScopeList>{token.scopes.join(', ')}</ScopeList>
@@ -76,8 +81,14 @@ const Details = styled('div')`
   margin-top: ${space(1)};
 `;
 
-const ScopesWrapper = styled('div')`
+const TokenWrapper = styled('div')`
   flex: 1;
+  margin-right: ${space(1)};
+`;
+
+const ScopesWrapper = styled('div')`
+  flex: 2;
+  margin-right: ${space(4)};
 `;
 
 const ScopeList = styled('div')`

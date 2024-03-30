@@ -1,5 +1,5 @@
 import {Fragment, useEffect} from 'react';
-import {RouteComponentProps} from 'react-router';
+import type {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
@@ -18,23 +18,20 @@ import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {IconAdd, IconArrow} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   IntegrationProvider,
   IntegrationWithConfig,
   Organization,
   PluginWithProjectList,
 } from 'sentry/types';
 import {singleLineRenderer} from 'sentry/utils/marked';
-import {
-  ApiQueryKey,
-  setApiQueryData,
-  useApiQuery,
-  useQueryClient,
-} from 'sentry/utils/queryClient';
+import type {ApiQueryKey} from 'sentry/utils/queryClient';
+import {setApiQueryData, useApiQuery, useQueryClient} from 'sentry/utils/queryClient';
 import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
 import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
 import useApi from 'sentry/utils/useApi';
 import useOrganization from 'sentry/utils/useOrganization';
+import useProjects from 'sentry/utils/useProjects';
 import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import BreadcrumbTitle from 'sentry/views/settings/components/settingsBreadcrumb/breadcrumbTitle';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
@@ -113,6 +110,7 @@ function ConfigureIntegration({params, router, routes, location}: Props) {
   });
 
   const provider = config.providers.find(p => p.key === integration?.provider.key);
+  const {projects} = useProjects();
 
   useRouteAnalyticsEventNames(
     'integrations.details_viewed',
@@ -126,6 +124,10 @@ function ConfigureIntegration({params, router, routes, location}: Props) {
         }
       : {}
   );
+
+  useEffect(() => {
+    refetchIntegration();
+  }, [projects, refetchIntegration]);
 
   useEffect(() => {
     // This page should not be accessible by members (unless its github or gitlab)
@@ -215,11 +217,12 @@ function ConfigureIntegration({params, router, routes, location}: Props) {
     }
   };
 
-  const isInstalledOpsgeniePlugin = (plugin: PluginWithProjectList) => {
-    return (
-      plugin.id === 'opsgenie' &&
-      plugin.projectList.length >= 1 &&
-      plugin.projectList.find(({enabled}) => enabled === true)
+  const isOpsgeniePluginInstalled = () => {
+    return (plugins || []).some(
+      p =>
+        p.id === 'opsgenie' &&
+        p.projectList.length >= 1 &&
+        p.projectList.some(({enabled}) => enabled === true)
     );
   };
 
@@ -259,10 +262,10 @@ function ConfigureIntegration({params, router, routes, location}: Props) {
       );
     }
 
-    const shouldMigrateJiraPlugin =
+    const canMigrateJiraPlugin =
       ['jira', 'jira_server'].includes(provider.key) &&
       (plugins || []).find(({id}) => id === 'jira');
-    if (shouldMigrateJiraPlugin) {
+    if (canMigrateJiraPlugin) {
       return (
         <Access access={['org:integrations']}>
           {({hasAccess}) => (
@@ -301,11 +304,9 @@ function ConfigureIntegration({params, router, routes, location}: Props) {
       );
     }
 
-    const shouldMigrateOpsgeniePlugin =
-      provider.key === 'opsgenie' &&
-      organization.features.includes('integrations-opsgenie-migration') &&
-      (plugins || []).find(isInstalledOpsgeniePlugin);
-    if (shouldMigrateOpsgeniePlugin) {
+    const canMigrateOpsgeniePlugin =
+      provider.key === 'opsgenie' && isOpsgeniePluginInstalled();
+    if (canMigrateOpsgeniePlugin) {
       return (
         <Access access={['org:integrations']}>
           {({hasAccess}) => (

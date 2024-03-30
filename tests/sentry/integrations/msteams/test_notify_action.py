@@ -8,21 +8,22 @@ from sentry.integrations.msteams import MsTeamsNotifyServiceAction
 from sentry.models.integrations import Integration
 from sentry.testutils.cases import PerformanceIssueTestCase, RuleTestCase
 from sentry.testutils.helpers.notifications import TEST_ISSUE_OCCURRENCE, TEST_PERF_ISSUE_OCCURRENCE
-from sentry.testutils.silo import assume_test_silo_mode_of, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode_of
 from sentry.testutils.skips import requires_snuba
 from sentry.utils import json
 
 pytestmark = [requires_snuba]
 
 
-@region_silo_test
 class MsTeamsNotifyActionTest(RuleTestCase, PerformanceIssueTestCase):
     rule_cls = MsTeamsNotifyServiceAction
 
     def setUp(self):
         event = self.get_event()
 
-        self.integration = self.create_provider_integration(
+        self.integration, _ = self.create_provider_integration_for(
+            event.project.organization,
+            self.user,
             provider="msteams",
             name="Galactic Empire",
             external_id="D4r7h_Pl4gu315_th3_w153",
@@ -32,8 +33,6 @@ class MsTeamsNotifyActionTest(RuleTestCase, PerformanceIssueTestCase):
                 "expires_at": int(time.time()) + 86400,
             },
         )
-        with assume_test_silo_mode_of(Integration):
-            self.integration.add_organization(event.project.organization, self.user)
 
     def assert_form_valid(self, form, expected_channel_id, expected_channel):
         assert form.is_valid()

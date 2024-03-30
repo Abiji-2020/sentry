@@ -1,6 +1,6 @@
 import logging
-from datetime import datetime, timedelta
-from typing import Dict, List, TypedDict
+from datetime import UTC, datetime, timedelta
+from typing import TypedDict
 
 from sentry_sdk.crons.decorator import monitor
 
@@ -16,11 +16,11 @@ from sentry.utils.query import RangeQuerySetWrapper
 
 
 class GroupCount(TypedDict):
-    intervals: List[str]
-    data: List[int]
+    intervals: list[str]
+    data: list[int]
 
 
-ParsedGroupsCount = Dict[int, GroupCount]
+ParsedGroupsCount = dict[int, GroupCount]
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ ITERATOR_CHUNK = 10_000
 @instrumented_task(
     name="sentry.tasks.weekly_escalating_forecast.run_escalating_forecast",
     queue="weekly_escalating_forecast",
-    max_retries=0,  # TODO: Increase this when the task is changed to run weekly
+    max_retries=0,
     silo_mode=SiloMode.REGION,
 )
 @monitor(monitor_slug="escalating-issue-forecast-job-monitor")
@@ -59,7 +59,7 @@ def run_escalating_forecast() -> None:
     silo_mode=SiloMode.REGION,
 )
 @retry
-def generate_forecasts_for_projects(project_ids: List[int]) -> None:
+def generate_forecasts_for_projects(project_ids: list[int]) -> None:
     query_until_escalating_groups = (
         group
         for group in RangeQuerySetWrapper(
@@ -67,7 +67,7 @@ def generate_forecasts_for_projects(project_ids: List[int]) -> None:
                 status=GroupStatus.IGNORED,
                 substatus=GroupSubStatus.UNTIL_ESCALATING,
                 project_id__in=project_ids,
-                last_seen__gte=datetime.now() - timedelta(days=7),
+                last_seen__gte=datetime.now(UTC) - timedelta(days=7),
             ).select_related(
                 "project", "project__organization"
             ),  # TODO: Remove this once the feature flag is removed

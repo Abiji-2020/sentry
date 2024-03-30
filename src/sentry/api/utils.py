@@ -6,9 +6,10 @@ import re
 import sys
 import time
 import traceback
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from datetime import timedelta
-from typing import Any, Generator, List, Literal, Mapping, Tuple, overload
+from typing import Any, Literal, overload
 from urllib.parse import urlparse
 
 import sentry_sdk
@@ -19,8 +20,10 @@ from django.views.decorators.csrf import csrf_exempt
 from rest_framework.exceptions import APIException, ParseError
 from rest_framework.request import Request
 from sentry_sdk import Scope
+from urllib3.exceptions import MaxRetryError, ReadTimeoutError
 
 from sentry import options
+from sentry.auth.staff import is_active_staff
 from sentry.auth.superuser import is_active_superuser
 from sentry.discover.arithmetic import ArithmeticError
 from sentry.exceptions import IncompatibleMetricsQuery, InvalidParams, InvalidSearchQuery
@@ -88,7 +91,7 @@ def default_start_end_dates(
 
 @overload
 def get_date_range_from_params(
-    params: dict[str, Any],
+    params: Mapping[str, Any],
     optional: Literal[False] = ...,
     default_stats_period: datetime.timedelta = ...,
 ) -> tuple[datetime.datetime, datetime.datetime]:
@@ -97,7 +100,7 @@ def get_date_range_from_params(
 
 @overload
 def get_date_range_from_params(
-    params: dict[str, Any],
+    params: Mapping[str, Any],
     optional: bool = ...,
     default_stats_period: datetime.timedelta = ...,
 ) -> tuple[None, None] | tuple[datetime.datetime, datetime.datetime]:
@@ -105,7 +108,7 @@ def get_date_range_from_params(
 
 
 def get_date_range_from_params(
-    params: dict[str, Any],
+    params: Mapping[str, Any],
     optional: bool = False,
     default_stats_period: datetime.timedelta = MAX_STATS_PERIOD,
 ) -> tuple[None, None] | tuple[datetime.datetime, datetime.datetime]:
@@ -131,7 +134,15 @@ def get_date_range_from_params(
     :return: A length 2 tuple containing start/end or raises an `InvalidParams`
     exception
     """
-    mutable_params = params.copy()
+    mutable_params = {
+        k: params[k]
+        for k in (
+            *("timeframe", "timeframeStart", "timeframeEnd"),
+            *("statsPeriod", "statsPeriodStart", "statsPeriodEnd"),
+            *("start", "end"),
+        )
+        if k in params
+    }
     timeframe = mutable_params.get("timeframe")
     timeframe_start = mutable_params.get("timeframeStart")
     timeframe_end = mutable_params.get("timeframeEnd")
@@ -241,8 +252,8 @@ def is_member_disabled_from_limit(
     if getattr(user, "is_sentry_app", False):
         return False
 
-    # don't limit super users
-    if is_active_superuser(request):
+    # don't limit superuser or staff
+    if is_active_superuser(request) or is_active_staff(request):
         return False
 
     # must be a simple user at this point
@@ -295,7 +306,7 @@ def generate_region_url(region_name: str | None = None) -> str:
     return region_url_template.replace("{region}", region_name)
 
 
-_path_patterns: List[Tuple[re.Pattern[str], str]] = [
+_path_patterns: list[tuple[re.Pattern[str], str]] = [
     # /organizations/slug/section, but not /organizations/new
     (re.compile(r"\/?organizations\/(?!new)[^\/]+\/(.*)"), r"/\1"),
     # For /settings/:orgId/ -> /settings/organization/
@@ -410,6 +421,7 @@ def handle_query_errors() -> Generator[None, None, None]:
         raise ParseError(detail=message)
     except SnubaError as error:
         message = "Internal error. Please try again."
+        arg = error.args[0] if len(error.args) > 0 else None
         if isinstance(
             error,
             (
@@ -418,6 +430,9 @@ def handle_query_errors() -> Generator[None, None, None]:
                 QueryExecutionTimeMaximum,
                 QueryTooManySimultaneous,
             ),
+        ) or isinstance(
+            arg,
+            ReadTimeoutError,
         ):
             sentry_sdk.set_tag("query.error_reason", "Timeout")
             raise ParseError(detail=TIMEOUT_ERROR_MESSAGE)
@@ -437,6 +452,12 @@ def handle_query_errors() -> Generator[None, None, None]:
         ):
             sentry_sdk.capture_exception(error)
             message = "Internal error. Your query failed to run."
+        elif isinstance(
+            arg,
+            (MaxRetryError),
+        ):
+            sentry_sdk.capture_message(str(error), level="warning")
+            message = "Internal error. Your query failed to run. This may be temporary please try again later."
         else:
             sentry_sdk.capture_exception(error)
         raise APIException(detail=message)

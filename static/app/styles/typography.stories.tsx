@@ -1,4 +1,5 @@
-import {CSSProperties, Fragment} from 'react';
+import type {CSSProperties} from 'react';
+import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import LetterSpacingGraphic from 'sentry-images/stories/typography/letter-spacing.svg';
@@ -9,11 +10,11 @@ import {CodeSnippet} from 'sentry/components/codeSnippet';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import Panel from 'sentry/components/panels/panel';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {Flex} from 'sentry/components/profiling/flex';
 import {IconCheckmark, IconCircleFill, IconClose} from 'sentry/icons';
 import {space} from 'sentry/styles/space';
-import {ColorOrAlias} from 'sentry/utils/theme';
+import type {ColorOrAlias} from 'sentry/utils/theme';
 
 const FixedWidth = styled('div')`
   max-width: 800px;

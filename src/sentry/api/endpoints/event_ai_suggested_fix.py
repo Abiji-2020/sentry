@@ -126,10 +126,13 @@ def get_openai_client() -> OpenAI:
     return openai_client
 
 
-def get_openai_policy(organization):
+def get_openai_policy(organization, user, pii_certified):
     """Uses a signal to determine what the policy for OpenAI should be."""
     results = openai_policy_check.send(
-        sender=EventAiSuggestedFixEndpoint, organization=organization
+        sender=EventAiSuggestedFixEndpoint,
+        organization=organization,
+        user=user,
+        pii_certified=pii_certified,
     )
     result = "allowed"
 
@@ -261,7 +264,7 @@ def describe_event_for_ai(event, model):
     return data
 
 
-def suggest_fix(event_data, model="gpt-3.5-turbo-16k", stream=False):
+def suggest_fix(event_data, model=settings.SENTRY_AI_SUGGESTED_FIX_MODEL, stream=False):
     """Runs an OpenAI request to suggest a fix."""
     prompt = PROMPT.replace("___FUN_PROMPT___", random.choice(FUN_PROMPT_CHOICES))
     event_info = describe_event_for_ai(event_data, model=model)
@@ -294,10 +297,10 @@ def reduce_stream(response):
 
 @region_silo_endpoint
 class EventAiSuggestedFixEndpoint(ProjectEndpoint):
+    owner = ApiOwner.ML_AI
     publish_status = {
         "GET": ApiPublishStatus.PRIVATE,
     }
-    owner = ApiOwner.ML_AI
     # go away
     private = True
     enforce_rate_limit = True
@@ -326,14 +329,21 @@ class EventAiSuggestedFixEndpoint(ProjectEndpoint):
             raise ResourceDoesNotExist
 
         # Check the OpenAI access policy
-        policy = get_openai_policy(request.organization)
+        policy = get_openai_policy(
+            request.organization,
+            request.user,
+            pii_certified=request.GET.get("pii_certified") == "yes",
+        )
         policy_failure = None
         stream = request.GET.get("stream") == "yes"
+
         if policy == "subprocessor":
             policy_failure = "subprocessor"
         elif policy == "individual_consent":
             if request.GET.get("consent") != "yes":
                 policy_failure = "individual_consent"
+        elif policy == "pii_certification_required":
+            policy_failure = "pii_certification_required"
         elif policy == "allowed":
             pass
         else:

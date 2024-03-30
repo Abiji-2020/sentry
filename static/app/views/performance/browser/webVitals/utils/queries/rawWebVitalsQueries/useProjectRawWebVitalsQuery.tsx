@@ -1,4 +1,4 @@
-import {Tag} from 'sentry/types';
+import type {Tag} from 'sentry/types';
 import {useDiscoverQuery} from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
@@ -25,6 +25,7 @@ export const useProjectRawWebVitalsQuery = ({transaction, tag, dataset}: Props =
         'p75(measurements.cls)',
         'p75(measurements.ttfb)',
         'p75(measurements.fid)',
+        'p75(measurements.inp)',
         'p75(transaction.duration)',
         'count_web_vitals(measurements.lcp, any)',
         'count_web_vitals(measurements.fcp, any)',
@@ -35,7 +36,8 @@ export const useProjectRawWebVitalsQuery = ({transaction, tag, dataset}: Props =
       ],
       name: 'Web Vitals',
       query: [
-        'transaction.op:pageload',
+        'transaction.op:[pageload,""]',
+        'span.op:[ui.interaction.click,""]',
         ...(transaction ? [`transaction:"${transaction}"`] : []),
         ...(tag ? [`{tag.key}:"${tag.name}"`] : []),
       ].join(' '),
@@ -45,7 +47,7 @@ export const useProjectRawWebVitalsQuery = ({transaction, tag, dataset}: Props =
     pageFilters.selection
   );
 
-  return useDiscoverQuery({
+  const result = useDiscoverQuery({
     eventView: projectEventView,
     limit: 50,
     location,
@@ -57,4 +59,5 @@ export const useProjectRawWebVitalsQuery = ({transaction, tag, dataset}: Props =
     skipAbort: true,
     referrer: 'api.performance.browser.web-vitals.project',
   });
+  return result;
 };

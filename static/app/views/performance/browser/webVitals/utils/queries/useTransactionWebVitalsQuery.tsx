@@ -1,17 +1,17 @@
-import {Sort} from 'sentry/utils/discover/fields';
+import type {Sort} from 'sentry/utils/discover/fields';
 import {useTransactionRawWebVitalsQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/rawWebVitalsQueries/useTransactionRawWebVitalsQuery';
 import {useTransactionWebVitalsScoresQuery} from 'sentry/views/performance/browser/webVitals/utils/queries/storedScoreQueries/useTransactionWebVitalsScoresQuery';
-import {WebVitals} from 'sentry/views/performance/browser/webVitals/utils/types';
+import type {WebVitals} from 'sentry/views/performance/browser/webVitals/utils/types';
 import {useStoredScoresSetting} from 'sentry/views/performance/browser/webVitals/utils/useStoredScoresSetting';
 
 type Props = {
   defaultSort?: Sort;
   enabled?: boolean;
   limit?: number;
-  opportunityWebVital?: WebVitals | 'total';
   query?: string;
   sortName?: string;
   transaction?: string | null;
+  webVital?: WebVitals | 'total';
 };
 
 export const useTransactionWebVitalsQuery = ({
@@ -19,7 +19,7 @@ export const useTransactionWebVitalsQuery = ({
   transaction,
   defaultSort,
   sortName = 'sort',
-  opportunityWebVital,
+  webVital,
   enabled,
   query,
 }: Props) => {
@@ -30,7 +30,7 @@ export const useTransactionWebVitalsQuery = ({
     defaultSort,
     sortName,
     enabled: shouldUseStoredScores && enabled,
-    opportunityWebVital,
+    webVital,
     query,
   });
   const rawWebVitalsResult = useTransactionRawWebVitalsQuery({

@@ -4,8 +4,9 @@ import abc
 import contextlib
 import logging
 import re
+from collections.abc import Mapping
 from datetime import datetime, timedelta
-from typing import Any, Dict, Mapping, Tuple
+from typing import Any
 
 from django import forms
 from django.core.cache import cache
@@ -62,7 +63,7 @@ class EventFrequencyForm(forms.Form):
     )
     value = forms.IntegerField(widget=forms.TextInput())
     comparisonType = forms.ChoiceField(
-        choices=list(sorted(comparison_types.items(), key=lambda item: item[1])),
+        choices=tuple(comparison_types.items()),
         required=False,
     )
     comparisonInterval = forms.ChoiceField(
@@ -74,7 +75,10 @@ class EventFrequencyForm(forms.Form):
     )
 
     def clean(self) -> dict[str, Any] | None:
-        cleaned_data: dict[str, Any] = super().clean()
+        cleaned_data = super().clean()
+        if cleaned_data is None:
+            return None
+
         # Don't store an empty string here if the value isn't passed
         if cleaned_data.get("comparisonInterval") == "":
             del cleaned_data["comparisonInterval"]
@@ -110,7 +114,7 @@ class BaseEventFrequencyCondition(EventCondition, abc.ABC):
 
         super().__init__(*args, **kwargs)
 
-    def _get_options(self) -> Tuple[str | None, float | None]:
+    def _get_options(self) -> tuple[str | None, float | None]:
         interval, value = None, None
         try:
             interval = self.get_option("interval")
@@ -129,12 +133,12 @@ class BaseEventFrequencyCondition(EventCondition, abc.ABC):
             return False
 
         # TODO(mgaeta): Bug: Rule is optional.
-        current_value = self.get_rate(event, interval, self.rule.environment_id)  # type: ignore
+        current_value = self.get_rate(event, interval, self.rule.environment_id)  # type: ignore[arg-type, union-attr]
         logging.info("event_frequency_rule current: %s, threshold: %s", current_value, value)
         return current_value > value
 
     def passes_activity_frequency(
-        self, activity: ConditionActivity, buckets: Dict[datetime, int]
+        self, activity: ConditionActivity, buckets: dict[datetime, int]
     ) -> bool:
         interval, value = self._get_options()
         if not (interval and value is not None):
@@ -162,7 +166,7 @@ class BaseEventFrequencyCondition(EventCondition, abc.ABC):
 
         return result > value
 
-    def get_preview_aggregate(self) -> Tuple[str, str]:
+    def get_preview_aggregate(self) -> tuple[str, str]:
         raise NotImplementedError
 
     def query(self, event: GroupEvent, start: datetime, end: datetime, environment_id: str) -> int:
@@ -187,7 +191,7 @@ class BaseEventFrequencyCondition(EventCondition, abc.ABC):
         end = timezone.now()
         # For conditions with interval >= 1 hour we don't need to worry about read your writes
         # consistency. Disable it so that we can scale to more nodes.
-        option_override_cm = contextlib.nullcontext()
+        option_override_cm: contextlib.AbstractContextManager[object] = contextlib.nullcontext()
         if duration >= timedelta(hours=1):
             option_override_cm = options_override({"consistent": False})
         with option_override_cm:
@@ -218,8 +222,8 @@ class BaseEventFrequencyCondition(EventCondition, abc.ABC):
             bool: True if rule is approximated to be created on project creation, False otherwise.
         """
         # TODO(mgaeta): Bug: Rule is optional.
-        delta = abs(self.rule.date_added - self.project.date_added)  # type: ignore
-        guess: bool = delta.total_seconds() < 30 and self.rule.label == [DEFAULT_RULE_LABEL, DEFAULT_RULE_LABEL_NEW]  # type: ignore
+        delta = abs(self.rule.date_added - self.project.date_added)  # type: ignore[union-attr]
+        guess: bool = delta.total_seconds() < 30 and self.rule.label == [DEFAULT_RULE_LABEL, DEFAULT_RULE_LABEL_NEW]  # type: ignore[union-attr]
         return guess
 
 
@@ -243,7 +247,7 @@ class EventFrequencyCondition(BaseEventFrequencyCondition):
         )
         return sums[event.group_id]
 
-    def get_preview_aggregate(self) -> Tuple[str, str]:
+    def get_preview_aggregate(self) -> tuple[str, str]:
         return "count", "roundedTime"
 
 
@@ -267,7 +271,7 @@ class EventUniqueUserFrequencyCondition(BaseEventFrequencyCondition):
         )
         return totals[event.group_id]
 
-    def get_preview_aggregate(self) -> Tuple[str, str]:
+    def get_preview_aggregate(self) -> tuple[str, str]:
         return "uniq", "user"
 
 
@@ -390,12 +394,12 @@ class EventFrequencyPercentCondition(BaseEventFrequencyCondition):
         return 0
 
     def passes_activity_frequency(
-        self, activity: ConditionActivity, buckets: Dict[datetime, int]
+        self, activity: ConditionActivity, buckets: dict[datetime, int]
     ) -> bool:
         raise NotImplementedError
 
 
-def bucket_count(start: datetime, end: datetime, buckets: Dict[datetime, int]) -> int:
+def bucket_count(start: datetime, end: datetime, buckets: dict[datetime, int]) -> int:
     rounded_end = round_to_five_minute(end)
     rounded_start = round_to_five_minute(start)
     count = buckets.get(rounded_end, 0) - buckets.get(rounded_start, 0)

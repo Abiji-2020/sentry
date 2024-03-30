@@ -7,8 +7,9 @@ import Link from 'sentry/components/links/link';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Project} from 'sentry/types/project';
+import type {Project} from 'sentry/types/project';
 import {decodeScalar} from 'sentry/utils/queryString';
+import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import useRouter from 'sentry/utils/useRouter';
@@ -16,7 +17,8 @@ import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import {CountCell} from 'sentry/views/starfish/components/tableCells/countCell';
 import {DurationCell} from 'sentry/views/starfish/components/tableCells/durationCell';
 import {useSpanMetrics} from 'sentry/views/starfish/queries/useSpanMetrics';
-import {SpanMetricsField, SpanMetricsQueryFilters} from 'sentry/views/starfish/types';
+import type {SpanMetricsQueryFilters} from 'sentry/views/starfish/types';
+import {SpanMetricsField} from 'sentry/views/starfish/types';
 import {formatVersionAndCenterTruncate} from 'sentry/views/starfish/utils/centerTruncate';
 import {
   DEFAULT_PLATFORM,
@@ -34,6 +36,7 @@ const {SPAN_SELF_TIME, SPAN_OP} = SpanMetricsField;
 type Props = {
   groupId: string;
   transactionName: string;
+  additionalFilters?: Record<string, string>;
   project?: Project | null;
   release?: string;
   sectionSubtitle?: string;
@@ -49,6 +52,7 @@ export function ScreenLoadSampleContainer({
   release,
   project,
   spanOp,
+  additionalFilters,
 }: Props) {
   const router = useRouter();
   const location = useLocation();
@@ -96,8 +100,9 @@ export function ScreenLoadSampleContainer({
   }
 
   const {data} = useSpanMetrics({
-    filters,
+    search: MutableSearch.fromQueryObject({...filters, ...additionalFilters}),
     fields: [`avg(${SPAN_SELF_TIME})`, 'count()', SPAN_OP],
+    enabled: Boolean(groupId) && Boolean(transactionName),
     referrer: 'api.starfish.span-summary-panel-samples-table-avg',
   });
 
@@ -147,6 +152,12 @@ export function ScreenLoadSampleContainer({
         </Block>
       </Container>
       <DurationChart
+        query={
+          additionalFilters
+            ? Object.entries(additionalFilters).map(([key, value]) => `${key}:${value}`)
+            : undefined
+        }
+        additionalFilters={additionalFilters}
         groupId={groupId}
         transactionName={transactionName}
         transactionMethod={transactionMethod}
@@ -166,6 +177,12 @@ export function ScreenLoadSampleContainer({
         }
       />
       <SampleTable
+        query={
+          additionalFilters
+            ? Object.entries(additionalFilters).map(([key, value]) => `${key}:${value}`)
+            : undefined
+        }
+        additionalFilters={additionalFilters}
         highlightedSpanId={highlightedSpanId}
         transactionMethod={transactionMethod}
         onMouseLeaveSample={() => setHighlightedSpanId(undefined)}

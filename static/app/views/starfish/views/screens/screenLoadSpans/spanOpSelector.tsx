@@ -4,7 +4,7 @@ import styled from '@emotion/styled';
 import {CompactSelect} from 'sentry/components/compactSelect';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {NewQuery} from 'sentry/types';
+import type {NewQuery} from 'sentry/types';
 import EventView from 'sentry/utils/discover/eventView';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {decodeScalar} from 'sentry/utils/queryString';
@@ -15,6 +15,17 @@ import {SpanMetricsField} from 'sentry/views/starfish/types';
 import {appendReleaseFilters} from 'sentry/views/starfish/utils/releaseComparison';
 import {MobileCursors} from 'sentry/views/starfish/views/screens/constants';
 import {useTableQuery} from 'sentry/views/starfish/views/screens/screensTable';
+
+export const TTID_CONTRIBUTING_SPAN_OPS = [
+  'file.read',
+  'file.write',
+  'ui.load',
+  'http.client',
+  'db',
+  'db.sql.room',
+  'db.sql.query',
+  'db.sql.transaction',
+];
 
 type Props = {
   primaryRelease?: string;
@@ -31,7 +42,7 @@ export function SpanOpSelector({transaction, primaryRelease, secondaryRelease}: 
   const searchQuery = new MutableSearch([
     'transaction.op:ui.load',
     `transaction:${transaction}`,
-    'span.op:[file.read,file.write,ui.load,http.client,db,db.sql.room,db.sql.query,db.sql.transaction]',
+    `span.op:[${TTID_CONTRIBUTING_SPAN_OPS.join(',')}]`,
     'has:span.description',
   ]);
   const queryStringPrimary = appendReleaseFilters(

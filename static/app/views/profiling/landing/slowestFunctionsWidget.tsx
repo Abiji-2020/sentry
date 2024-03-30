@@ -1,4 +1,5 @@
-import {CSSProperties, Fragment, ReactNode, useCallback, useMemo, useState} from 'react';
+import type {CSSProperties, ReactNode} from 'react';
+import {Fragment, useCallback, useMemo, useState} from 'react';
 import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 
@@ -19,7 +20,7 @@ import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {trackAnalytics} from 'sentry/utils/analytics';
 import {Frame} from 'sentry/utils/profiling/frame';
-import {EventsResultsDataRow} from 'sentry/utils/profiling/hooks/types';
+import type {EventsResultsDataRow} from 'sentry/utils/profiling/hooks/types';
 import {useProfileFunctions} from 'sentry/utils/profiling/hooks/useProfileFunctions';
 import {generateProfileFlamechartRouteWithQuery} from 'sentry/utils/profiling/routes';
 import {decodeScalar} from 'sentry/utils/queryString';
@@ -391,8 +392,8 @@ const FunctionName = styled(TextOverflow)`
 const TransactionsList = styled('div')`
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  grid-template-rows: 18px auto auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  grid-template-rows: 18px repeat(5, min-content);
   column-gap: ${space(1)};
   padding: ${space(0)} ${space(2)};
 `;

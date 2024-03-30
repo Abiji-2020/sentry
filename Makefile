@@ -26,12 +26,8 @@ install-py-dev :
 build-platform-assets \
 direnv-help \
 upgrade-pip \
-prerequisites \
 setup-git-config :
 	@SENTRY_NO_VENV_CHECK=1 ./scripts/do.sh $@
-
-setup-pyenv:
-	@./scripts/pyenv_setup.sh
 
 build-js-po: node-version-check
 	mkdir -p build
@@ -174,6 +170,7 @@ test-symbolicator:
 	@echo "--> Running symbolicator tests"
 	pytest tests/symbolicator -vv --cov . --cov-report="xml:.artifacts/symbolicator.coverage.xml"
 	pytest tests/relay_integration/lang/javascript/ -vv -m symbolicator
+	pytest tests/relay_integration/lang/java/ -vv -m symbolicator
 	@echo ""
 
 test-acceptance: node-version-check

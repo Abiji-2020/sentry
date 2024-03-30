@@ -20,7 +20,6 @@ LEGACY_PICKLE_TASKS = frozenset(
         # basic tasks that can already deal with primary keys passed
         "sentry.tasks.update_code_owners_schema",
         # integration tasks that must be passed models still
-        "sentry.integrations.slack.post_message",
         "sentry.integrations.slack.link_users_identities",
     ]
 )
@@ -111,11 +110,6 @@ class SentryRequest(Request):
 
 class SentryCelery(Celery):
     task_cls = SentryTask
-
-
-@signals.worker_process_init.connect
-def record_worker_init(*args, **kwargs):
-    metrics.incr("jobs.process.start")
 
 
 app = SentryCelery("sentry")

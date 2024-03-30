@@ -1,30 +1,29 @@
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {GridColumnHeader} from 'sentry/components/gridEditable';
-import SortLink, {Alignments} from 'sentry/components/gridEditable/sortLink';
+import type {GridColumnHeader} from 'sentry/components/gridEditable';
+import type {Alignments} from 'sentry/components/gridEditable/sortLink';
+import SortLink from 'sentry/components/gridEditable/sortLink';
+import type {Sort} from 'sentry/utils/discover/fields';
 import {
   aggregateFunctionOutputType,
   fieldAlignment,
   parseFunction,
-  Sort,
 } from 'sentry/utils/discover/fields';
 import {SpanFunction, SpanMetricsField} from 'sentry/views/starfish/types';
-import {QueryParameterNames} from 'sentry/views/starfish/views/queryParameters';
+import type {QueryParameterNames} from 'sentry/views/starfish/views/queryParameters';
 
 type Options = {
   column: GridColumnHeader<string>;
   location?: Location;
   sort?: Sort;
-  sortParameterName?:
-    | QueryParameterNames.ENDPOINTS_SORT
-    | QueryParameterNames.SPANS_SORT
-    | typeof DEFAULT_SORT_PARAMETER_NAME;
+  sortParameterName?: QueryParameterNames | typeof DEFAULT_SORT_PARAMETER_NAME;
 };
 
 const DEFAULT_SORT_PARAMETER_NAME = 'sort';
 
 const {SPAN_SELF_TIME, HTTP_RESPONSE_CONTENT_LENGTH} = SpanMetricsField;
-const {TIME_SPENT_PERCENTAGE, SPS, SPM, HTTP_ERROR_COUNT} = SpanFunction;
+const {TIME_SPENT_PERCENTAGE, SPS, SPM, HTTP_ERROR_COUNT, HTTP_RESPONSE_RATE} =
+  SpanFunction;
 
 export const SORTABLE_FIELDS = new Set([
   `avg(${SPAN_SELF_TIME})`,
@@ -37,6 +36,9 @@ export const SORTABLE_FIELDS = new Set([
   `${SPM}()`,
   `${TIME_SPENT_PERCENTAGE}()`,
   `${HTTP_ERROR_COUNT}()`,
+  `${HTTP_RESPONSE_RATE}(2)`,
+  `${HTTP_RESPONSE_RATE}(4)`,
+  `${HTTP_RESPONSE_RATE}(5)`,
   `avg(${HTTP_RESPONSE_CONTENT_LENGTH})`,
 ]);
 

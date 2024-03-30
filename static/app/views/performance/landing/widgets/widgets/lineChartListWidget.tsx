@@ -18,7 +18,7 @@ import {
   canUseMetricsData,
   useMEPSettingContext,
 } from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
-import {usePageError} from 'sentry/utils/performance/contexts/pageError';
+import {usePageAlert} from 'sentry/utils/performance/contexts/pageAlert';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {useLocation} from 'sentry/utils/useLocation';
 import withApi from 'sentry/utils/withApi';
@@ -28,9 +28,9 @@ import DurationChart from 'sentry/views/performance/charts/chart';
 import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
 import {
   createUnnamedTransactionsDiscoverTarget,
-  getPerformanceDuration,
   UNPARAMETERIZED_TRANSACTION,
 } from 'sentry/views/performance/utils';
+import {getPerformanceDuration} from 'sentry/views/performance/utils/getPerformanceDuration';
 import {SpanDescriptionCell} from 'sentry/views/starfish/components/tableCells/spanDescriptionCell';
 import {TimeSpentCell} from 'sentry/views/starfish/components/tableCells/timeSpentCell';
 import {ModuleName, SpanMetricsField} from 'sentry/views/starfish/types';
@@ -50,7 +50,7 @@ import SelectableList, {
 } from '../components/selectableList';
 import {transformDiscoverToList} from '../transforms/transformDiscoverToList';
 import {transformEventsRequestToArea} from '../transforms/transformEventsToArea';
-import {PerformanceWidgetProps, QueryDefinition, WidgetDataResult} from '../types';
+import type {PerformanceWidgetProps, QueryDefinition, WidgetDataResult} from '../types';
 import {
   eventsRequestQueryProps,
   getMEPParamsIfApplicable,
@@ -87,7 +87,7 @@ export function LineChartListWidget(props: PerformanceWidgetProps) {
   const mepSetting = useMEPSettingContext();
   const [selectedListIndex, setSelectListIndex] = useState<number>(0);
   const {ContainerActions, organization, InteractiveTitle} = props;
-  const pageError = usePageError();
+  const {setPageError} = usePageAlert();
   const canHaveIntegrationEmptyState = integrationEmptyStateWidgets.includes(
     props.chartSetting
   );
@@ -354,7 +354,7 @@ export function LineChartListWidget(props: PerformanceWidgetProps) {
               query={eventView.getQueryWithAdditionalConditions()}
               interval={interval}
               hideError
-              onError={pageError.setPageError}
+              onError={setPageError}
               queryExtras={extraQueryParams}
             />
           );
@@ -654,7 +654,7 @@ export function LineChartListWidget(props: PerformanceWidgetProps) {
       {...props}
       location={location}
       Subtitle={() => (
-        <Subtitle>{props.subTitle ?? t('Suggested transactions')}</Subtitle>
+        <Subtitle>{props.subTitle ?? t('Found in the following transactions')}</Subtitle>
       )}
       HeaderActions={provided => getContainerActions(provided)}
       InteractiveTitle={

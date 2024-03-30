@@ -1,4 +1,5 @@
-import {Fragment, MouseEvent, useContext, useState} from 'react';
+import type {MouseEvent} from 'react';
+import {Fragment, useContext, useState} from 'react';
 import styled from '@emotion/styled';
 import scrollToElement from 'scroll-to-element';
 
@@ -12,7 +13,6 @@ import {
   hasContextRegisters,
   hasContextSource,
   hasContextVars,
-  hasStacktraceLinkInFrameFeature,
   isExpandable,
   trimPackage,
 } from 'sentry/components/events/interfaces/frame/utils';
@@ -20,7 +20,7 @@ import {formatAddress, parseAddress} from 'sentry/components/events/interfaces/u
 import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
 import {TraceEventDataSectionContext} from 'sentry/components/events/traceEventDataSection';
 import StrictClick from 'sentry/components/strictClick';
-import Tag from 'sentry/components/tag';
+import {Tag} from 'sentry/components/tag';
 import {Tooltip} from 'sentry/components/tooltip';
 import {SLOW_TOOLTIP_DELAY} from 'sentry/constants';
 import {IconChevron} from 'sentry/icons/iconChevron';
@@ -28,22 +28,19 @@ import {IconFileBroken} from 'sentry/icons/iconFileBroken';
 import {IconRefresh} from 'sentry/icons/iconRefresh';
 import {IconWarning} from 'sentry/icons/iconWarning';
 import {t, tn} from 'sentry/locale';
-import ConfigStore from 'sentry/stores/configStore';
 import DebugMetaStore from 'sentry/stores/debugMetaStore';
-import {useLegacyStore} from 'sentry/stores/useLegacyStore';
 import {space} from 'sentry/styles/space';
-import {
+import type {
   Frame,
   PlatformKey,
   SentryAppComponent,
   SentryAppSchemaStacktraceLink,
 } from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
-import useOrganization from 'sentry/utils/useOrganization';
 import withSentryAppComponents from 'sentry/utils/withSentryAppComponents';
 
-import DebugImage from './debugMeta/debugImage';
+import type DebugImage from './debugMeta/debugImage';
 import {combineStatus} from './debugMeta/utils';
 import Context from './frame/context';
 import {SymbolicatorStatus} from './types';
@@ -102,9 +99,6 @@ function NativeFrame({
    */
   isHoverPreviewed = false,
 }: Props) {
-  const organization = useOrganization();
-  const {user} = useLegacyStore(ConfigStore);
-
   const traceEventDataSectionContext = useContext(TraceEventDataSectionContext);
 
   const absolute = traceEventDataSectionContext?.display.includes('absolute-addresses');
@@ -126,7 +120,7 @@ function NativeFrame({
     frame.symbolicatorStatus !== SymbolicatorStatus.UNKNOWN_IMAGE &&
     !isHoverPreviewed;
 
-  const leadsToApp = !frame.inApp && ((nextFrame && nextFrame.inApp) || !nextFrame);
+  const leadsToApp = !frame.inApp && (nextFrame?.inApp || !nextFrame);
   const expandable =
     !leadsToApp || includeSystemFrames
       ? isExpandable({
@@ -153,10 +147,7 @@ function NativeFrame({
 
   const contextLine = (frame?.context || []).find(l => l[0] === frame.lineNo);
   const hasStacktraceLink = frame.inApp && !!frame.filename && (isHovering || expanded);
-  const hasInFrameFeature = hasStacktraceLinkInFrameFeature(organization, user);
-  const showStacktraceLinkInFrame = hasStacktraceLink && hasInFrameFeature;
-  const showSentryAppStacktraceLinkInFrame =
-    showStacktraceLinkInFrame && components.length > 0;
+  const showSentryAppStacktraceLinkInFrame = hasStacktraceLink && components.length > 0;
 
   const handleMouseEnter = () => setHovering(true);
 
@@ -383,7 +374,7 @@ function NativeFrame({
             </ShowHideButton>
           ) : null}
           <GenericCellWrapper>
-            {showStacktraceLinkInFrame && (
+            {hasStacktraceLink && (
               <ErrorBoundary>
                 <StacktraceLink
                   frame={frame}
@@ -433,6 +424,7 @@ function NativeFrame({
           isExpanded={expanded}
           registersMeta={registersMeta}
           frameMeta={frameMeta}
+          platform={platform}
         />
       )}
     </StackTraceFrame>

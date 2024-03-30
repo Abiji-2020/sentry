@@ -3,11 +3,11 @@ import styled from '@emotion/styled';
 import startCase from 'lodash/startCase';
 import moment from 'moment-timezone';
 
-import ContextData from 'sentry/components/contextData';
+import StructuredEventData from 'sentry/components/structuredEventData';
 import {t} from 'sentry/locale';
 import plugins from 'sentry/plugins';
 import {space} from 'sentry/styles/space';
-import {Event, KeyValueListData} from 'sentry/types';
+import type {Event, KeyValueListData} from 'sentry/types';
 import {defined} from 'sentry/utils';
 
 import {AppEventContext} from './app';
@@ -145,7 +145,7 @@ export function getKnownData<Data, DataType>({
         value: raw ? (
           knownDataDetails.value
         ) : (
-          <ContextData
+          <StructuredEventData
             data={knownDataDetails.value}
             meta={meta?.[type]}
             withAnnotatedText

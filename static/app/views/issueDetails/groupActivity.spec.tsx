@@ -21,12 +21,8 @@ import GroupStore from 'sentry/stores/groupStore';
 import OrganizationStore from 'sentry/stores/organizationStore';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import TeamStore from 'sentry/stores/teamStore';
-import {
-  Group,
-  GroupActivityType,
-  Organization as TOrganization,
-  Project,
-} from 'sentry/types';
+import type {Group, Organization as TOrganization, Project} from 'sentry/types';
+import {GroupActivityType, PriorityLevel} from 'sentry/types';
 import useOrganization from 'sentry/utils/useOrganization';
 import GroupActivity from 'sentry/views/issueDetails/groupActivity';
 
@@ -205,6 +201,60 @@ describe('GroupActivity', function () {
     const item = screen.getAllByTestId('activity-item').at(-1);
     expect(item).toHaveTextContent(/Mark assigned this issue to anotheruser@sentry.io/);
     expect(item).toHaveTextContent(/Assigned via Slack/);
+  });
+
+  it('renders an assigned via suspect commit activity', function () {
+    createWrapper({
+      activity: [
+        {
+          data: {
+            assignee: '123',
+            assigneeEmail: 'anotheruser@sentry.io',
+            assigneeType: 'user',
+            integration: 'suspectCommitter',
+            user: UserFixture(),
+          },
+          project: ProjectFixture(),
+          dateCreated: '1999-10-01T15:31:38.950115Z',
+          id: '117',
+          type: GroupActivityType.ASSIGNED,
+          user: null,
+        },
+      ],
+    });
+    const activity = screen.getAllByTestId('activity-item').at(-1);
+    expect(activity).toHaveTextContent(
+      /Sentry auto-assigned this issue to anotheruser@sentry.io/
+    );
+    expect(activity).toHaveTextContent(/Assigned via Suspect Commit/);
+  });
+
+  it('does not render undefined when integration is not recognized', function () {
+    createWrapper({
+      activity: [
+        // @ts-ignore-next-line -> committing type crimes on `integration`
+        {
+          data: {
+            assignee: '123',
+            assigneeEmail: 'anotheruser@sentry.io',
+            assigneeType: 'user',
+            integration: 'lottery',
+            user: UserFixture(),
+          },
+          project: ProjectFixture(),
+          dateCreated: '1999-10-01T15:31:38.950115Z',
+          id: '117',
+          type: GroupActivityType.ASSIGNED,
+          user: null,
+        },
+      ],
+    });
+
+    const activity = screen.getAllByTestId('activity-item').at(-1);
+    expect(activity).toHaveTextContent(
+      /Sentry assigned this issue to anotheruser@sentry.io/
+    );
+    expect(activity).not.toHaveTextContent(/Assigned via Suspect Commit/);
   });
 
   it('resolved in commit with no releases', function () {
@@ -724,6 +774,47 @@ describe('GroupActivity', function () {
       );
       expect(activity).toHaveTextContent(
         'abc1 is greater than or equal to abc2 compared via release date'
+      );
+    });
+
+    it('renders a set priority activity for escalating issues', function () {
+      createWrapper({
+        activity: [
+          {
+            id: '123',
+            type: GroupActivityType.SET_PRIORITY,
+            project: ProjectFixture(),
+            data: {
+              priority: PriorityLevel.HIGH,
+              reason: 'escalating',
+            },
+            dateCreated,
+          },
+        ],
+        organization: OrganizationFixture({features: ['issue-priority-ui']}),
+      });
+      expect(screen.getAllByTestId('activity-item').at(-1)).toHaveTextContent(
+        'Sentry updated the priority value of this issue to be high after it escalated'
+      );
+    });
+    it('renders a set priority activity for ongoing issues', function () {
+      createWrapper({
+        activity: [
+          {
+            id: '123',
+            type: GroupActivityType.SET_PRIORITY,
+            project: ProjectFixture(),
+            data: {
+              priority: PriorityLevel.LOW,
+              reason: 'ongoing',
+            },
+            dateCreated,
+          },
+        ],
+        organization: OrganizationFixture({features: ['issue-priority-ui']}),
+      });
+      expect(screen.getAllByTestId('activity-item').at(-1)).toHaveTextContent(
+        'Sentry updated the priority value of this issue to be low after it was marked as ongoing'
       );
     });
   });

@@ -6,22 +6,17 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime
 from os import path
-from typing import IO, Generic, List, NamedTuple, Optional, Protocol, Tuple, TypeVar
+from typing import IO, Generic, NamedTuple, Protocol, TypeVar
 
 import sentry_sdk
 from django.db import IntegrityError, router
 from django.db.models import Q
 from django.utils import timezone
 
-from sentry import features, options
+from sentry import options
 from sentry.api.serializers import serialize
 from sentry.cache import default_cache
 from sentry.constants import ObjectStatus
-from sentry.debug_files.artifact_bundle_indexing import (
-    BundleManifest,
-    mark_bundle_for_flat_file_indexing,
-    update_artifact_bundle_index,
-)
 from sentry.debug_files.artifact_bundles import (
     INDEXING_THRESHOLD,
     get_bundles_indexing_state,
@@ -78,9 +73,7 @@ class AssembleResult(NamedTuple):
 
 
 @sentry_sdk.tracing.trace
-def assemble_file(
-    task, org_or_project, name, checksum, chunks, file_type
-) -> Optional[AssembleResult]:
+def assemble_file(task, org_or_project, name, checksum, chunks, file_type) -> AssembleResult | None:
     """
     Verifies and assembles a file model from chunks.
 
@@ -103,13 +96,14 @@ def assemble_file(
 
     # Reject all files that exceed the maximum allowed size for this organization.
     file_size = sum(x[2] for x in file_blobs)
-    if file_size > get_max_file_size(organization):
+    max_file_size = get_max_file_size(organization)
+    if file_size > max_file_size:
         set_assemble_status(
             task,
             org_or_project.id,
             checksum,
             ChunkFileState.ERROR,
-            detail="File exceeds maximum size",
+            detail=f"File {name} exceeds maximum size ({file_size} > {max_file_size})",
         )
 
         return None
@@ -486,9 +480,9 @@ class ArtifactBundlePostAssembler(PostAssembler[ArtifactBundleArchive]):
         self,
         assemble_result: AssembleResult,
         organization: Organization,
-        release: Optional[str],
-        dist: Optional[str],
-        project_ids: List[int],
+        release: str | None,
+        dist: str | None,
+        project_ids: list[int],
         is_release_bundle_migration: bool = False,
     ):
         super().__init__(assemble_result)
@@ -636,16 +630,10 @@ class ArtifactBundlePostAssembler(PostAssembler[ArtifactBundleArchive]):
                 dist=(self.dist or NULL_STRING),
             )
 
-        if features.has("organizations:sourcemaps-bundle-flat-file-indexing", self.organization):
-            try:
-                self._index_bundle_into_flat_file(artifact_bundle)
-            except Exception as e:
-                sentry_sdk.capture_exception(e)
-
     @sentry_sdk.tracing.trace
     def _create_or_update_artifact_bundle(
         self, bundle_id: str, date_added: datetime
-    ) -> Tuple[ArtifactBundle, bool]:
+    ) -> tuple[ArtifactBundle, bool]:
         existing_artifact_bundles = list(
             ArtifactBundle.objects.filter(organization_id=self.organization.id, bundle_id=bundle_id)
         )
@@ -706,7 +694,7 @@ class ArtifactBundlePostAssembler(PostAssembler[ArtifactBundleArchive]):
 
             return existing_artifact_bundle, False
 
-    def _remove_duplicate_artifact_bundles(self, ids: List[int]):
+    def _remove_duplicate_artifact_bundles(self, ids: list[int]):
         # In case there are no ids to delete, we don't want to run the query, otherwise it will result in a deletion of
         # all ArtifactBundle(s) with the specific bundle_id.
         if not ids:
@@ -744,34 +732,13 @@ class ArtifactBundlePostAssembler(PostAssembler[ArtifactBundleArchive]):
         if indexed_bundles + 1 < total_bundles:
             backfill_artifact_bundle_db_indexing.delay(self.organization.id, release, dist)
 
-    @sentry_sdk.tracing.trace
-    def _index_bundle_into_flat_file(self, artifact_bundle: ArtifactBundle):
-        identifiers = mark_bundle_for_flat_file_indexing(
-            artifact_bundle, self.archive.has_debug_ids(), self.project_ids, self.release, self.dist
-        )
-
-        bundles_to_add = [BundleManifest.from_artifact_bundle(artifact_bundle, self.archive)]
-
-        for identifier in identifiers:
-            try:
-                was_indexed = update_artifact_bundle_index(
-                    identifier, bundles_to_add=bundles_to_add
-                )
-                if not was_indexed:
-                    metrics.incr("artifact_bundle_flat_file_indexing.indexing.would_block")
-                    # NOTE: the `backfill_artifact_index_updates` will pick this up automatically,
-                    # no need to explicitly spawn any backfill task for this
-            except Exception as e:
-                metrics.incr("artifact_bundle_flat_file_indexing.error_when_indexing")
-                sentry_sdk.capture_exception(e)
-
 
 def prepare_post_assembler(
     assemble_result: AssembleResult,
     organization: Organization,
-    release: Optional[str],
-    dist: Optional[str],
-    project_ids: Optional[List[int]],
+    release: str | None,
+    dist: str | None,
+    project_ids: list[int] | None,
     upload_as_artifact_bundle: bool,
     is_release_bundle_migration: bool,
 ) -> PostAssembler:

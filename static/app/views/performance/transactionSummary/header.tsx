@@ -1,6 +1,6 @@
 import {useCallback} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import Feature from 'sentry/components/acl/feature';
 import GuideAnchor from 'sentry/components/assistant/guideAnchor';
@@ -13,10 +13,10 @@ import ReplayCountBadge from 'sentry/components/replays/replayCountBadge';
 import {TabList} from 'sentry/components/tabs';
 import {Tooltip} from 'sentry/components/tooltip';
 import {t} from 'sentry/locale';
-import {Organization, Project} from 'sentry/types';
+import type {Organization, Project} from 'sentry/types';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
-import {MetricsCardinalityContext} from 'sentry/utils/performance/contexts/metricsCardinality';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {MetricsCardinalityContext} from 'sentry/utils/performance/contexts/metricsCardinality';
 import HasMeasurementsQuery from 'sentry/utils/performance/vitals/hasMeasurementsQuery';
 import {isProfilingSupportedOrProjectHasProfiles} from 'sentry/utils/profiling/platforms';
 import useReplayCountForTransactions from 'sentry/utils/replayCount/useReplayCountForTransactions';
@@ -28,7 +28,7 @@ import {getCurrentLandingDisplay, LandingDisplayField} from '../landing/utils';
 import Tab from './tabs';
 import TeamKeyTransactionButton from './teamKeyTransactionButton';
 import TransactionThresholdButton from './transactionThresholdButton';
-import {TransactionThresholdMetric} from './transactionThresholdModal';
+import type {TransactionThresholdMetric} from './transactionThresholdModal';
 
 type Props = {
   currentTab: Tab;
@@ -113,6 +113,10 @@ function TransactionHeader({
   const {getReplayCountForTransaction} = useReplayCountForTransactions();
   const replaysCount = getReplayCountForTransaction(transactionName);
 
+  const hasTransactionSummaryCleanupFlag = organization.features.includes(
+    'performance-transaction-summary-cleanup'
+  );
+
   return (
     <Layout.Header>
       <Layout.HeaderContent>
@@ -195,7 +199,10 @@ function TransactionHeader({
               <TabList.Item key={Tab.TRANSACTION_SUMMARY}>{t('Overview')}</TabList.Item>
               <TabList.Item key={Tab.EVENTS}>{t('Sampled Events')}</TabList.Item>
               <TabList.Item key={Tab.TAGS}>{t('Tags')}</TabList.Item>
-              <TabList.Item key={Tab.SPANS}>{t('Spans')}</TabList.Item>
+              <TabList.Item key={Tab.SPANS} hidden={hasTransactionSummaryCleanupFlag}>
+                {t('Spans')}
+              </TabList.Item>
+
               <TabList.Item
                 key={Tab.ANOMALIES}
                 textValue={t('Anomalies')}

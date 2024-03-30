@@ -6,18 +6,19 @@ import logging
 import time
 import traceback
 import uuid
-from datetime import datetime, timedelta
+import zoneinfo
+from collections.abc import Generator
+from datetime import datetime, timedelta, timezone
 from hashlib import md5
 from random import Random
-from typing import Any, Generator
+from typing import Any
 from unittest import mock
 from urllib.parse import urlencode
 
-import pytz
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
-from django.utils import timezone
+from django.utils import timezone as django_timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import View
@@ -29,8 +30,9 @@ from sentry.digests.notifications import Notification, build_digest
 from sentry.digests.utils import get_digest_metadata
 from sentry.event_manager import EventManager, get_event_type
 from sentry.http import get_server_hostname
-from sentry.issues.grouptype import NoiseConfig, PerformanceNPlusOneGroupType
+from sentry.issues.grouptype import NoiseConfig
 from sentry.issues.occurrence_consumer import process_event_and_issue_occurrence
+from sentry.issues.producer import PayloadType, produce_occurrence_to_kafka
 from sentry.mail.notifications import get_builder_args
 from sentry.models.activity import Activity
 from sentry.models.group import Group, GroupStatus
@@ -59,7 +61,8 @@ from sentry.testutils.helpers.notifications import (  # NOQA:S007
 )
 from sentry.types.group import GroupSubStatus
 from sentry.utils import json, loremipsum
-from sentry.utils.dates import to_datetime, to_timestamp
+from sentry.utils.auth import AuthenticatedHttpRequest
+from sentry.utils.dates import to_datetime
 from sentry.utils.email import MessageBuilder, inline_css
 from sentry.utils.http import absolute_uri
 from sentry.utils.samples import load_data
@@ -141,7 +144,7 @@ def make_group_metadata(random: Random) -> dict[str, Any]:
 
 
 def make_group_generator(random: Random, project: Project) -> Generator[Group, None, None]:
-    epoch = int(to_timestamp(datetime(2016, 6, 1, 0, 0, 0, tzinfo=timezone.utc)))
+    epoch = int(datetime(2016, 6, 1, 0, 0, 0, tzinfo=timezone.utc).timestamp())
     for id in itertools.count(1):
         first_seen = epoch + random.randint(0, 60 * 60 * 24 * 30)
         last_seen = random.randint(first_seen, first_seen + (60 * 60 * 24 * 30))
@@ -201,19 +204,22 @@ def make_performance_event(project: Project, sample_name: str):
     timestamp = datetime(2017, 9, 6, 0, 0)
     start_timestamp = timestamp - timedelta(seconds=3)
     event_id = "44f1419e73884cd2b45c79918f4b6dc4"
-    occurrence_data = SAMPLE_TO_OCCURRENCE_MAP[sample_name].to_dict()
+    mock_occurrence = SAMPLE_TO_OCCURRENCE_MAP[sample_name]
+    occurrence_data = mock_occurrence.to_dict()
     occurrence_data["event_id"] = event_id
     perf_data = dict(load_data(sample_name, start_timestamp=start_timestamp, timestamp=timestamp))
     perf_data["event_id"] = event_id
     perf_data["project_id"] = project.id
 
     with mock.patch.object(
-        PerformanceNPlusOneGroupType, "noise_config", new=NoiseConfig(0, timedelta(minutes=1))
+        mock_occurrence.type, "noise_config", new=NoiseConfig(0, timedelta(minutes=1))
     ):
         occurrence, group_info = process_event_and_issue_occurrence(
             occurrence_data,
             perf_data,
         )
+        produce_occurrence_to_kafka(payload_type=PayloadType.OCCURRENCE, occurrence=occurrence)
+
     assert group_info is not None
     generic_group = group_info.group
     group_event = generic_group.get_latest_event()
@@ -254,7 +260,7 @@ def get_shared_context(rule, org, project: Project, group, event):
         "group": group,
         "group_header": get_group_substatus_text(group),
         "event": event,
-        "timezone": pytz.timezone("Europe/Vienna"),
+        "timezone": zoneinfo.ZoneInfo("Europe/Vienna"),
         # http://testserver/organizations/example/issues/<issue-id>/?referrer=alert_email
         #       &alert_type=email&alert_timestamp=<ts>&alert_rule_id=1
         "link": get_group_settings_link(group, None, rules, 1337),
@@ -381,10 +387,10 @@ class ActivityMailPreview:
 
 
 class ActivityMailDebugView(View):
-    def get_activity(self, request: HttpRequest, event):
+    def get_activity(self, request: AuthenticatedHttpRequest, event):
         raise NotImplementedError
 
-    def get(self, request: HttpRequest) -> HttpResponse:
+    def get(self, request: AuthenticatedHttpRequest) -> HttpResponse:
         org = Organization(id=1, slug="organization", name="My Company")
         project = Project(id=1, organization=org, slug="project", name="My Project")
 
@@ -500,7 +506,7 @@ def digest(request):
             data = event_manager.get_data()
 
             data["timestamp"] = random.randint(
-                int(to_timestamp(group.first_seen)), int(to_timestamp(group.last_seen))
+                int(group.first_seen.timestamp()), int(group.last_seen.timestamp())
             )
 
             event = eventstore.backend.create_event(
@@ -516,7 +522,7 @@ def digest(request):
                         ),
                         notification_uuid,
                     ),
-                    to_timestamp(event.datetime),
+                    event.datetime.timestamp(),
                 )
             )
 
@@ -541,7 +547,7 @@ def digest(request):
                     notification_uuid,
                 ),
                 # this is required for acceptance tests to pass as the EventManager won't accept a timestamp in the past
-                to_timestamp(datetime(2016, 6, 22, 16, 16, 0, tzinfo=timezone.utc)),
+                datetime(2016, 6, 22, 16, 16, 0, tzinfo=timezone.utc).timestamp(),
             )
         )
         state["groups"][perf_group.id] = perf_group
@@ -565,7 +571,7 @@ def digest(request):
                     notification_uuid,
                 ),
                 # this is required for acceptance tests to pass as the EventManager won't accept a timestamp in the past
-                to_timestamp(datetime(2016, 6, 22, 16, 16, 0, tzinfo=timezone.utc)),
+                datetime(2016, 6, 22, 16, 16, 0, tzinfo=timezone.utc).timestamp(),
             )
         )
         state["groups"][generic_group.id] = generic_group
@@ -709,7 +715,7 @@ def recover_account(request):
             ),
             "domain": get_server_hostname(),
             "ip_address": request.META["REMOTE_ADDR"],
-            "datetime": timezone.now(),
+            "datetime": django_timezone.now(),
         },
     ).render(request)
 
@@ -730,7 +736,7 @@ def relocate_account(request):
             ),
             "domain": get_server_hostname(),
             "ip_address": request.META["REMOTE_ADDR"],
-            "datetime": timezone.now(),
+            "datetime": django_timezone.now(),
             "orgs": ["testsentry", "testgetsentry"],
         },
     ).render(request)
@@ -743,7 +749,7 @@ def relocation_failed(request):
         text_template="sentry/emails/relocation_failed.txt",
         context={
             "domain": get_server_hostname(),
-            "datetime": timezone.now(),
+            "datetime": django_timezone.now(),
             "uuid": str(uuid.uuid4().hex),
             "reason": "This is a sample failure reason",
         },
@@ -757,7 +763,7 @@ def relocation_started(request):
         text_template="sentry/emails/relocation_started.txt",
         context={
             "domain": get_server_hostname(),
-            "datetime": timezone.now(),
+            "datetime": django_timezone.now(),
             "uuid": str(uuid.uuid4().hex),
             "orgs": ["testsentry", "testgetsentry"],
         },
@@ -771,7 +777,7 @@ def relocation_succeeded(request):
         text_template="sentry/emails/relocation_succeeded.txt",
         context={
             "domain": get_server_hostname(),
-            "datetime": timezone.now(),
+            "datetime": django_timezone.now(),
             "uuid": str(uuid.uuid4().hex),
             "orgs": ["testsentry", "testgetsentry"],
         },
@@ -793,7 +799,7 @@ def org_delete_confirm(request):
         context={
             "organization": org,
             "audit_log_entry": entry,
-            "eta": timezone.now() + timedelta(days=1),
+            "eta": django_timezone.now() + timedelta(days=1),
             "url": org.absolute_url(reverse("sentry-restore-organization", args=[org.slug])),
         },
     ).render(request)

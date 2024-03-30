@@ -20,11 +20,10 @@ from sentry.models.integrations.external_issue import ExternalIssue
 from sentry.services.hybrid_cloud.integration import RpcIntegration
 from sentry.silo import SiloMode
 from sentry.testutils.cases import APITestCase
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.utils.http import absolute_uri
 
 
-@region_silo_test
 class VstsWebhookWorkItemTest(APITestCase):
     def setUp(self):
         self.access_token = "1234567890"
@@ -55,6 +54,7 @@ class VstsWebhookWorkItemTest(APITestCase):
             self.org_integration = self.model.add_organization(
                 self.organization, self.user, self.identity.id
             )
+            assert self.org_integration is not None
             self.org_integration.config = {
                 "sync_status_reverse": True,
                 "sync_status_forward": True,

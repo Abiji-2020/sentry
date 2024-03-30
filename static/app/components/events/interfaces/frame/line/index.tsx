@@ -4,12 +4,12 @@ import classNames from 'classnames';
 
 import ListItem from 'sentry/components/list/listItem';
 import StrictClick from 'sentry/components/strictClick';
-import {
+import type {
   PlatformKey,
   SentryAppComponent,
   SentryAppSchemaStacktraceLink,
 } from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 import withSentryAppComponents from 'sentry/utils/withSentryAppComponents';
 
 import Context from '../context';
@@ -71,7 +71,7 @@ function Line({
   // Prioritize the frame platform but fall back to the platform
   // of the stack trace / exception
   const platform = getPlatform(frame.platform, props.platform ?? 'other') as PlatformKey;
-  const leadsToApp = !frame.inApp && ((nextFrame && nextFrame.inApp) || !nextFrame);
+  const leadsToApp = !frame.inApp && (nextFrame?.inApp || !nextFrame);
 
   const expandable =
     !leadsToApp || includeSystemFrames
@@ -164,6 +164,7 @@ function Line({
         isExpanded={isExpanded}
         registersMeta={registersMeta}
         frameMeta={frameMeta}
+        platform={platform}
       />
     </StyleListItem>
   );

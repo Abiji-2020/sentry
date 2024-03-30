@@ -1,5 +1,4 @@
 from random import Random
-from typing import List
 
 from django.core.cache import cache
 
@@ -10,12 +9,11 @@ from sentry.services.hybrid_cloud.user.service import user_service
 from sentry.silo import SiloMode
 from sentry.testutils.factories import Factories
 from sentry.testutils.pytest.fixtures import django_db_all
-from sentry.testutils.silo import assume_test_silo_mode, no_silo_test, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode, no_silo_test
 from sentry.types.region import get_local_region
 
 
 @django_db_all(transaction=True)
-@region_silo_test
 def test_caching_function():
     cache.clear()
 
@@ -24,7 +22,7 @@ def test_caching_function():
         return user_service.get_many(filter=dict(user_ids=[user_id]))[0]
 
     users = [Factories.create_user() for _ in range(3)]
-    old: List[RpcUser] = []
+    old: list[RpcUser] = []
 
     for u in users:
         next_user = get_user(u.id)

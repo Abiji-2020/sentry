@@ -1,16 +1,16 @@
-import selectEvent from 'react-select-event';
 import {NotificationDefaultsFixture} from 'sentry-fixture/notificationDefaults';
 import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
 import ConfigStore from 'sentry/stores/configStore';
-import {Organization as TOrganization} from 'sentry/types';
-import {OrganizationIntegration} from 'sentry/types/integrations';
+import type {Organization as TOrganization} from 'sentry/types';
+import type {OrganizationIntegration} from 'sentry/types/integrations';
 
-import {NotificationOptionsObject, NotificationProvidersObject} from './constants';
+import type {NotificationOptionsObject, NotificationProvidersObject} from './constants';
 import NotificationSettingsByType from './notificationSettingsByType';
-import {Identity} from './types';
+import type {Identity} from './types';
 
 function renderMockRequests({
   notificationOptions = [],

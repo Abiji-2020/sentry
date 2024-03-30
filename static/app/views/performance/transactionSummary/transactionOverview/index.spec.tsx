@@ -1,4 +1,5 @@
-import {browserHistory, InjectedRouter} from 'react-router';
+import type {InjectedRouter} from 'react-router';
+import {browserHistory} from 'react-router';
 import {OrganizationFixture} from 'sentry-fixture/organization';
 import {ProjectFixture} from 'sentry-fixture/project';
 import {TeamFixture} from 'sentry-fixture/team';
@@ -16,7 +17,7 @@ import {
 import OrganizationStore from 'sentry/stores/organizationStore';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import TeamStore from 'sentry/stores/teamStore';
-import {Project} from 'sentry/types';
+import type {Project} from 'sentry/types';
 import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {MetricsCardinalityProvider} from 'sentry/utils/performance/contexts/metricsCardinality';
 import {
@@ -121,7 +122,7 @@ describe('Performance > TransactionSummary', function () {
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/issues/?limit=5&project=2&query=is%3Aunresolved%20transaction%3A%2Fperformance&sort=new&statsPeriod=14d',
+      url: '/organizations/org-slug/issues/?limit=5&project=2&query=is%3Aunresolved%20transaction%3A%2Fperformance&sort=trends&statsPeriod=14d',
       body: [],
     });
 
@@ -889,7 +890,7 @@ describe('Performance > TransactionSummary', function () {
 
     it('forwards conditions to related issues', async function () {
       const issueGet = MockApiClient.addMockResponse({
-        url: '/organizations/org-slug/issues/?limit=5&project=2&query=tag%3Avalue%20is%3Aunresolved%20transaction%3A%2Fperformance&sort=new&statsPeriod=14d',
+        url: '/organizations/org-slug/issues/?limit=5&project=2&query=tag%3Avalue%20is%3Aunresolved%20transaction%3A%2Fperformance&sort=trends&statsPeriod=14d',
         body: [],
       });
 
@@ -916,7 +917,7 @@ describe('Performance > TransactionSummary', function () {
 
     it('does not forward event type to related issues', async function () {
       const issueGet = MockApiClient.addMockResponse({
-        url: '/organizations/org-slug/issues/?limit=5&project=2&query=tag%3Avalue%20is%3Aunresolved%20transaction%3A%2Fperformance&sort=new&statsPeriod=14d',
+        url: '/organizations/org-slug/issues/?limit=5&project=2&query=tag%3Avalue%20is%3Aunresolved%20transaction%3A%2Fperformance&sort=trends&statsPeriod=14d',
         body: [],
         match: [
           (_, options) => {
@@ -1207,7 +1208,7 @@ describe('Performance > TransactionSummary', function () {
 
     it('uses MEP dataset for stats query and shows fallback warning', async function () {
       MockApiClient.addMockResponse({
-        url: '/organizations/org-slug/issues/?limit=5&project=2&query=has%3Anot-compatible%20is%3Aunresolved%20transaction%3A%2Fperformance&sort=new&statsPeriod=14d',
+        url: '/organizations/org-slug/issues/?limit=5&project=2&query=has%3Anot-compatible%20is%3Aunresolved%20transaction%3A%2Fperformance&sort=trends&statsPeriod=14d',
         body: [],
       });
       MockApiClient.addMockResponse({

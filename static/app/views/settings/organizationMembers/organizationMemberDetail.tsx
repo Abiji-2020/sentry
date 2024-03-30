@@ -26,12 +26,13 @@ import {Tooltip} from 'sentry/components/tooltip';
 import {IconRefresh} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {Member, Organization} from 'sentry/types';
+import type {Member, Organization} from 'sentry/types';
 import isMemberDisabledFromLimit from 'sentry/utils/isMemberDisabledFromLimit';
 import Teams from 'sentry/utils/teams';
 import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import withOrganization from 'sentry/utils/withOrganization';
-import DeprecatedAsyncView, {AsyncViewState} from 'sentry/views/deprecatedAsyncView';
+import type {AsyncViewState} from 'sentry/views/deprecatedAsyncView';
+import DeprecatedAsyncView from 'sentry/views/deprecatedAsyncView';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TeamSelectForMember from 'sentry/views/settings/components/teamSelect/teamSelectForMember';
 
@@ -53,7 +54,6 @@ interface Props extends RouteComponentProps<RouteParams, {}> {
 }
 
 interface State extends AsyncViewState {
-  groupOrgRoles: Member['groupOrgRoles']; // Form state
   member: Member | null;
   orgRole: Member['orgRole']; // Form state
   teamRoles: Member['teamRoles']; // Form state
@@ -73,7 +73,6 @@ class OrganizationMemberDetail extends DeprecatedAsyncView<Props, State> {
   getDefaultState(): State {
     return {
       ...super.getDefaultState(),
-      groupOrgRoles: [],
       member: null,
       orgRole: '',
       teamRoles: [],
@@ -89,11 +88,10 @@ class OrganizationMemberDetail extends DeprecatedAsyncView<Props, State> {
 
   onRequestSuccess({data, stateKey}: {data: Member; stateKey: string}) {
     if (stateKey === 'member') {
-      const {orgRole, teamRoles, groupOrgRoles} = data;
+      const {orgRole, teamRoles} = data;
       this.setState({
         orgRole,
         teamRoles,
-        groupOrgRoles,
       });
     }
   }
@@ -119,8 +117,7 @@ class OrganizationMemberDetail extends DeprecatedAsyncView<Props, State> {
       });
       addSuccessMessage(t('Saved'));
     } catch (resp) {
-      const errorMessage =
-        (resp && resp.responseJSON && resp.responseJSON.detail) || t('Could not save...');
+      const errorMessage = resp?.responseJSON?.detail || t('Could not save...');
       this.setState({busy: false});
       addErrorMessage(errorMessage);
     }

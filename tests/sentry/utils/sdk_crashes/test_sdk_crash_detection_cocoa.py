@@ -1,4 +1,4 @@
-from typing import Collection, Dict
+from collections.abc import Collection
 from unittest.mock import patch
 
 from fixtures.sdk_crash_detection.crash_event_cocoa import (
@@ -8,7 +8,6 @@ from fixtures.sdk_crash_detection.crash_event_cocoa import (
     get_sentry_frame,
 )
 from sentry.testutils.cases import TestCase
-from sentry.testutils.silo import region_silo_test
 from sentry.utils.safe import get_path, set_path
 from tests.sentry.utils.sdk_crashes.test_sdk_crash_detection import BaseSDKCrashDetectionMixin
 
@@ -36,7 +35,7 @@ class CococaSDKFilenameTestMixin(BaseSDKCrashDetectionMixin):
             mock_sdk_crash_reporter,
         )
 
-    def _get_crash_event(self, filename) -> Dict[str, Collection[str]]:
+    def _get_crash_event(self, filename) -> dict[str, Collection[str]]:
         return get_crash_event_with_frames(
             frames=[
                 {
@@ -622,7 +621,6 @@ class CococaSDKFunctionTestMixin(BaseSDKCrashDetectionMixin):
         )
 
 
-@region_silo_test
 class SDKCrashDetectionCocoaTest(
     TestCase, CococaSDKFilenameTestMixin, CococaSDKFramesTestMixin, CococaSDKFunctionTestMixin
 ):

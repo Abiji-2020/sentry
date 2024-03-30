@@ -14,7 +14,7 @@ import {IconChat} from 'sentry/icons';
 import {tct} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import type {Group, Organization} from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 import {projectCanLinkToReplay} from 'sentry/utils/replays/projectSupportsReplay';
 import withOrganization from 'sentry/utils/withOrganization';
 
@@ -81,7 +81,7 @@ function EventOrGroupExtraDetails({data, showAssignee, organization}: Props) {
           <span>{numComments}</span>
         </CommentsLink>
       )}
-      {showReplayCount && <IssueReplayCount groupId={id} />}
+      {showReplayCount && <IssueReplayCount group={data as Group} />}
       {logger && (
         <LoggerAnnotation>
           <GlobalSelectionLink

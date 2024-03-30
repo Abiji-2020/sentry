@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pickle
+from collections.abc import Callable, Mapping
 from functools import partial
-from typing import Any, Callable, Mapping, Optional, Union
+from typing import Any
 
 from arroyo.processing.strategies.run_task_with_multiprocessing import (
     MultiprocessingPool as ArroyoMultiprocessingPool,
@@ -30,8 +31,8 @@ class MetricsWrapper(Metrics):
     def __init__(
         self,
         backend: MetricsBackend,
-        name: Optional[str] = None,
-        tags: Optional[Tags] = None,
+        name: str | None = None,
+        tags: Tags | None = None,
     ) -> None:
         self.__backend = backend
         self.__name = name
@@ -43,7 +44,7 @@ class MetricsWrapper(Metrics):
         else:
             return f"{self.__name}.{name}"
 
-    def __merge_tags(self, tags: Optional[Tags]) -> Optional[Tags]:
+    def __merge_tags(self, tags: Tags | None) -> Tags | None:
         if self.__tags is None:
             return tags
         elif tags is None:
@@ -54,8 +55,8 @@ class MetricsWrapper(Metrics):
     def increment(
         self,
         name: str,
-        value: Union[int, float] = 1,
-        tags: Optional[Tags] = None,
+        value: int | float = 1,
+        tags: Tags | None = None,
         stacklevel: int = 0,
     ) -> None:
         # sentry metrics backend uses `incr` instead of `increment`
@@ -64,13 +65,14 @@ class MetricsWrapper(Metrics):
             amount=value,
             tags=self.__merge_tags(tags),
             stacklevel=stacklevel + 1,
+            sample_rate=1,
         )
 
     def gauge(
         self,
         name: str,
-        value: Union[int, float],
-        tags: Optional[Tags] = None,
+        value: int | float,
+        tags: Tags | None = None,
         stacklevel: int = 0,
     ) -> None:
         self.__backend.gauge(
@@ -78,13 +80,14 @@ class MetricsWrapper(Metrics):
             value=value,
             tags=self.__merge_tags(tags),
             stacklevel=stacklevel + 1,
+            sample_rate=1,
         )
 
     def timing(
         self,
         name: str,
-        value: Union[int, float],
-        tags: Optional[Tags] = None,
+        value: int | float,
+        tags: Tags | None = None,
         stacklevel: int = 0,
     ) -> None:
         self.__backend.timing(
@@ -92,11 +95,12 @@ class MetricsWrapper(Metrics):
             value=value,
             tags=self.__merge_tags(tags),
             stacklevel=stacklevel + 1,
+            sample_rate=1,
         )
 
 
 def _get_arroyo_subprocess_initializer(
-    initializer: Optional[Callable[[], None]]
+    initializer: Callable[[], None] | None
 ) -> Callable[[], None]:
     from sentry.metrics.middleware import get_current_global_tags
 
@@ -107,7 +111,7 @@ def _get_arroyo_subprocess_initializer(
     return partial(_initialize_arroyo_subprocess, initializer=initializer, tags=tags)
 
 
-def _initialize_arroyo_subprocess(initializer: Optional[Callable[[], None]], tags: Tags) -> None:
+def _initialize_arroyo_subprocess(initializer: Callable[[], None] | None, tags: Tags) -> None:
     from sentry.runner import configure
 
     configure()
@@ -131,9 +135,7 @@ def initialize_arroyo_main() -> None:
 
 
 class MultiprocessingPool:
-    def __init__(
-        self, num_processes: int, initializer: Optional[Callable[[], None]] = None
-    ) -> None:
+    def __init__(self, num_processes: int, initializer: Callable[[], None] | None = None) -> None:
         self.__initializer = initializer
         if settings.KAFKA_CONSUMER_FORCE_DISABLE_MULTIPROCESSING:
             self.__pool = None
@@ -143,11 +145,11 @@ class MultiprocessingPool:
             )
 
     @property
-    def initializer(self) -> Optional[Callable[[], None]]:
+    def initializer(self) -> Callable[[], None] | None:
         return self.__initializer
 
     @property
-    def pool(self) -> Optional[ArroyoMultiprocessingPool]:
+    def pool(self) -> ArroyoMultiprocessingPool | None:
         return self.__pool
 
     def close(self) -> None:

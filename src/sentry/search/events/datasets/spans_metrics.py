@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, Mapping, Optional, Union
+from collections.abc import Callable, Mapping
 
 import sentry_sdk
 from snuba_sdk import AliasedExpression, Column, Condition, Function, Identifier, Op, OrderBy
@@ -10,7 +10,9 @@ from sentry.exceptions import IncompatibleMetricsQuery
 from sentry.search.events import builder, constants, fields
 from sentry.search.events.datasets import field_aliases, filter_aliases, function_aliases
 from sentry.search.events.datasets.base import DatasetConfig
+from sentry.search.events.fields import SnQLStringArg
 from sentry.search.events.types import SelectType, WhereType
+from sentry.search.utils import DEVICE_CLASS
 from sentry.snuba.metrics.naming_layer.mri import SpanMRI
 from sentry.snuba.referrer import Referrer
 
@@ -20,17 +22,15 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
     def __init__(self, builder: builder.SpansMetricsQueryBuilder):
         self.builder = builder
-        self.total_span_duration: Optional[float] = None
+        self.total_span_duration: float | None = None
 
     @property
     def search_filter_converter(
         self,
-    ) -> Mapping[str, Callable[[SearchFilter], Optional[WhereType]]]:
+    ) -> Mapping[str, Callable[[SearchFilter], WhereType | None]]:
         return {
             constants.SPAN_DOMAIN_ALIAS: self._span_domain_filter_converter,
-            constants.DEVICE_CLASS_ALIAS: lambda search_filter: filter_aliases.device_class_converter(
-                self.builder, search_filter
-            ),
+            constants.DEVICE_CLASS_ALIAS: self._device_class_filter_converter,
         }
 
     @property
@@ -332,6 +332,31 @@ class SpansMetricsDatasetConfig(DatasetConfig):
                     default_result_type="percentage",
                 ),
                 fields.MetricsFunction(
+                    "http_response_rate",
+                    required_args=[
+                        SnQLStringArg("code"),
+                    ],
+                    snql_distribution=lambda args, alias: function_aliases.resolve_division(
+                        self._resolve_http_response_count(args),
+                        Function(
+                            "countIf",
+                            [
+                                Column("value"),
+                                Function(
+                                    "equals",
+                                    [
+                                        Column("metric_id"),
+                                        self.resolve_metric("span.self_time"),
+                                    ],
+                                ),
+                            ],
+                        ),
+                        alias,
+                    ),
+                    default_result_type="percentage",
+                ),
+                # TODO: Deprecated, use `http_response_rate(5)` instead
+                fields.MetricsFunction(
                     "http_error_rate",
                     snql_distribution=lambda args, alias: function_aliases.resolve_division(
                         self._resolve_http_error_count(args),
@@ -352,6 +377,15 @@ class SpansMetricsDatasetConfig(DatasetConfig):
                     ),
                     default_result_type="percentage",
                 ),
+                fields.MetricsFunction(
+                    "http_response_count",
+                    required_args=[
+                        SnQLStringArg("code"),
+                    ],
+                    snql_distribution=self._resolve_http_response_count,
+                    default_result_type="integer",
+                ),
+                # TODO: Deprecated, use `http_response_count(5)` instead
                 fields.MetricsFunction(
                     "http_error_count",
                     snql_distribution=self._resolve_http_error_count,
@@ -451,7 +485,7 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
         return function_converter
 
-    def _span_domain_filter_converter(self, search_filter: SearchFilter) -> Optional[WhereType]:
+    def _span_domain_filter_converter(self, search_filter: SearchFilter) -> WhereType | None:
         value = search_filter.value.value
         if search_filter.value.is_wildcard():
             value = search_filter.value.value[1:-1]
@@ -482,10 +516,15 @@ class SpansMetricsDatasetConfig(DatasetConfig):
                 0,
             )
 
+    def _device_class_filter_converter(self, search_filter: SearchFilter) -> SelectType:
+        return filter_aliases.device_class_converter(
+            self.builder, search_filter, {**DEVICE_CLASS, "Unknown": {""}}
+        )
+
     def _resolve_span_module(self, alias: str) -> SelectType:
         return field_aliases.resolve_span_module(self.builder, alias)
 
-    def _resolve_span_domain(self, alias: Optional[str] = None) -> SelectType:
+    def _resolve_span_domain(self, alias: str | None = None) -> SelectType:
         return Function(
             "arrayFilter",
             [
@@ -506,7 +545,7 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
     def _resolve_unique_span_domains(
         self,
-        alias: Optional[str] = None,
+        alias: str | None = None,
     ) -> SelectType:
         return Function("arrayJoin", [self._resolve_span_domain()], alias)
 
@@ -515,7 +554,7 @@ class SpansMetricsDatasetConfig(DatasetConfig):
         self,
         metric_condition: Function,
         condition: Function,
-        alias: Optional[str] = None,
+        alias: str | None = None,
     ) -> SelectType:
         return Function(
             "countIf",
@@ -562,7 +601,7 @@ class SpansMetricsDatasetConfig(DatasetConfig):
         return Function("toFloat64", [self.total_span_duration], alias)
 
     def _resolve_time_spent_percentage(
-        self, args: Mapping[str, Union[str, Column, SelectType, int, float]], alias: str
+        self, args: Mapping[str, str | Column | SelectType | int | float], alias: str
     ) -> SelectType:
         total_time = self._resolve_total_span_duration(
             constants.TOTAL_SPAN_DURATION_ALIAS, args["scope"]
@@ -581,11 +620,36 @@ class SpansMetricsDatasetConfig(DatasetConfig):
             alias,
         )
 
+    def _resolve_http_response_count(
+        self,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
+    ) -> SelectType:
+        condition = Function(
+            "startsWith",
+            [
+                self.builder.column("span.status_code"),
+                args["code"],
+            ],
+        )
+
+        return self._resolve_count_if(
+            Function(
+                "equals",
+                [
+                    Column("metric_id"),
+                    self.resolve_metric("span.self_time"),
+                ],
+            ),
+            condition,
+            alias,
+        )
+
     def _resolve_http_error_count(
         self,
-        _: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
-        extra_condition: Optional[Function] = None,
+        _: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
+        extra_condition: Function | None = None,
     ) -> SelectType:
         statuses = [
             self.builder.resolve_tag_value(status) for status in constants.HTTP_SERVER_ERROR_STATUS
@@ -622,8 +686,8 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
     def _resolve_main_thread_count(
         self,
-        _: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        _: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         return self._resolve_count_if(
             Function(
@@ -645,8 +709,8 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
     def _resolve_ttid_count(
         self,
-        _: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        _: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         return self._resolve_count_if(
             Function(
@@ -668,8 +732,8 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
     def _resolve_ttfd_count(
         self,
-        _: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
+        _: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
     ) -> SelectType:
         return self._resolve_count_if(
             Function(
@@ -691,26 +755,26 @@ class SpansMetricsDatasetConfig(DatasetConfig):
 
     def _resolve_epm(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
-        extra_condition: Optional[Function] = None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
+        extra_condition: Function | None = None,
     ) -> SelectType:
         return self._resolve_rate(60, args, alias, extra_condition)
 
     def _resolve_eps(
         self,
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
-        extra_condition: Optional[Function] = None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
+        extra_condition: Function | None = None,
     ) -> SelectType:
         return self._resolve_rate(None, args, alias, extra_condition)
 
     def _resolve_rate(
         self,
-        interval: Optional[int],
-        args: Mapping[str, Union[str, Column, SelectType, int, float]],
-        alias: Optional[str] = None,
-        extra_condition: Optional[Function] = None,
+        interval: int | None,
+        args: Mapping[str, str | Column | SelectType | int | float],
+        alias: str | None = None,
+        extra_condition: Function | None = None,
     ) -> SelectType:
         base_condition = Function(
             "equals",
@@ -751,7 +815,7 @@ class SpansMetricsLayerDatasetConfig(DatasetConfig):
 
     def __init__(self, builder: builder.SpansMetricsQueryBuilder):
         self.builder = builder
-        self.total_span_duration: Optional[float] = None
+        self.total_span_duration: float | None = None
 
     def resolve_mri(self, value) -> Column:
         """Given the public facing column name resolve it to the MRI and return a Column"""
@@ -764,7 +828,7 @@ class SpansMetricsLayerDatasetConfig(DatasetConfig):
     @property
     def search_filter_converter(
         self,
-    ) -> Mapping[str, Callable[[SearchFilter], Optional[WhereType]]]:
+    ) -> Mapping[str, Callable[[SearchFilter], WhereType | None]]:
         return {}
 
     @property

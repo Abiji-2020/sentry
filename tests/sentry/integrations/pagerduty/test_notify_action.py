@@ -1,4 +1,3 @@
-from datetime import timezone
 from unittest.mock import patch
 
 import responses
@@ -10,13 +9,13 @@ from sentry.silo import SiloMode
 from sentry.testutils.cases import PerformanceIssueTestCase, RuleTestCase
 from sentry.testutils.helpers.datetime import before_now, iso_format
 from sentry.testutils.helpers.notifications import TEST_ISSUE_OCCURRENCE
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.testutils.skips import requires_snuba
 from sentry.utils import json
 
 pytestmark = [requires_snuba]
 
-event_time = before_now(days=3).replace(tzinfo=timezone.utc)
+event_time = before_now(days=3)
 # external_id is the account name in pagerduty
 EXTERNAL_ID = "example-pagerduty"
 SERVICES = [
@@ -29,23 +28,20 @@ SERVICES = [
 ]
 
 
-@region_silo_test
 class PagerDutyNotifyActionTest(RuleTestCase, PerformanceIssueTestCase):
     rule_cls = PagerDutyNotifyServiceAction
 
     def setUp(self):
         with assume_test_silo_mode(SiloMode.CONTROL):
-            self.integration = self.create_provider_integration(
+            self.integration, org_integration = self.create_provider_integration_for(
+                self.organization,
+                self.user,
                 provider="pagerduty",
                 name="Example",
                 external_id=EXTERNAL_ID,
                 metadata={"services": SERVICES},
             )
-            self.integration.add_organization(self.organization, self.user)
         with assume_test_silo_mode(SiloMode.CONTROL):
-            org_integration = OrganizationIntegration.objects.get(
-                integration_id=self.integration.id, organization_id=self.organization.id
-            )
             self.service = add_service(
                 org_integration,
                 service_name=SERVICES[0]["service_name"],
@@ -176,21 +172,49 @@ class PagerDutyNotifyActionTest(RuleTestCase, PerformanceIssueTestCase):
         assert data["payload"]["custom_details"]["title"] == group_event.occurrence.issue_title
 
     def test_render_label(self):
-        rule = self.get_rule(data={"account": self.integration.id, "service": self.service["id"]})
+        rule_data = {
+            "account": self.integration.id,
+            "service": self.service["id"],
+            "severity": "warning",
+        }
+        rule = self.get_rule(data=rule_data)
 
         assert (
             rule.render_label()
             == "Send a notification to PagerDuty account Example and service Critical"
         )
 
+        with self.feature("organizations:integrations-custom-alert-priorities"):
+            # reinitialize rule to utilize flag
+            rule = self.get_rule(data=rule_data)
+            assert (
+                rule.render_label()
+                == "Send a notification to PagerDuty account Example and service Critical with warning severity"
+            )
+
     def test_render_label_without_integration(self):
         with assume_test_silo_mode(SiloMode.CONTROL):
             self.integration.delete()
 
-        rule = self.get_rule(data={"account": self.integration.id, "service": self.service["id"]})
+        rule_data = {
+            "account": self.integration.id,
+            "service": self.service["id"],
+            "severity": "default",
+        }
+        rule = self.get_rule(data=rule_data)
 
-        label = rule.render_label()
-        assert label == "Send a notification to PagerDuty account [removed] and service [removed]"
+        assert (
+            rule.render_label()
+            == "Send a notification to PagerDuty account [removed] and service [removed]"
+        )
+
+        with self.feature("organizations:integrations-custom-alert-priorities"):
+            # reinitialize rule to utilize flag
+            rule = self.get_rule(data=rule_data)
+            assert (
+                rule.render_label()
+                == "Send a notification to PagerDuty account [removed] and service [removed] with default severity"
+            )
 
     def test_valid_service_options(self):
         # create new org that has the same pd account but different a service added

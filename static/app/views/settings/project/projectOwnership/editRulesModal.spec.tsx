@@ -6,7 +6,7 @@ import {UserFixture} from 'sentry-fixture/user';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
 import ConfigStore from 'sentry/stores/configStore';
-import {IssueOwnership} from 'sentry/types';
+import type {IssueOwnership} from 'sentry/types';
 
 import {EditOwnershipRules} from './editRulesModal';
 
@@ -41,20 +41,6 @@ describe('Project Ownership Input', () => {
     render(
       <EditOwnershipRules
         organization={org}
-        ownership={ownership}
-        project={project}
-        onCancel={() => {}}
-        onSave={() => {}}
-      />
-    );
-
-    expect(screen.getByText('Globbing Syntax')).toBeInTheDocument();
-  });
-
-  it('renders with streamline-targeting-context', () => {
-    render(
-      <EditOwnershipRules
-        organization={{...org, features: ['streamline-targeting-context']}}
         ownership={ownership}
         project={project}
         onCancel={() => {}}

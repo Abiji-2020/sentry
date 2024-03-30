@@ -11,7 +11,8 @@ import {Threads} from 'sentry/components/events/interfaces/threads';
 import {displayOptions} from 'sentry/components/events/traceEventDataSection';
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {EventOrGroupType} from 'sentry/types';
-import {EntryType, Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
 
 describe('Threads', function () {
   const organization = OrganizationFixture();
@@ -227,13 +228,15 @@ describe('Threads', function () {
         organization,
       };
 
-      it('renders', function () {
+      it('renders', async function () {
         render(<Threads {...props} />, {
           organization,
         });
 
         // Title
-        expect(screen.getByRole('heading', {name: 'Stack Trace'})).toBeInTheDocument();
+        expect(
+          await screen.findByRole('heading', {name: 'Stack Trace'})
+        ).toBeInTheDocument();
 
         // Actions
         expect(screen.getByRole('radio', {name: 'Full Stack Trace'})).toBeInTheDocument();
@@ -878,10 +881,10 @@ describe('Threads', function () {
         organization,
       };
 
-      it('renders', function () {
+      it('renders', async function () {
         render(<Threads {...props} />, {organization});
         // Title
-        const threadSelector = screen.getByTestId('thread-selector');
+        const threadSelector = await screen.findByTestId('thread-selector');
         expect(threadSelector).toBeInTheDocument();
         within(threadSelector).getByText('main');
 
@@ -906,7 +909,7 @@ describe('Threads', function () {
         expect(screen.queryAllByTestId('stack-trace-frame')).toHaveLength(3);
       });
 
-      it('renders thread state and lock reason', function () {
+      it('renders thread state and lock reason', async function () {
         const newOrg = {
           ...organization,
           features: ['anr-improvements'],
@@ -914,7 +917,7 @@ describe('Threads', function () {
         const newProps = {...props, organization: newOrg};
         render(<Threads {...newProps} />, {organization: newOrg});
         // Title
-        expect(screen.getByTestId('thread-selector')).toBeInTheDocument();
+        expect(await screen.findByTestId('thread-selector')).toBeInTheDocument();
 
         expect(screen.getByText('Threads')).toBeInTheDocument();
         expect(screen.getByText('Thread State')).toBeInTheDocument();
@@ -941,7 +944,7 @@ describe('Threads', function () {
         expect(screen.queryAllByTestId('stack-trace-frame')).toHaveLength(3);
       });
 
-      it('hides thread tag event entry if none', function () {
+      it('hides thread tag event entry if none', async function () {
         const newOrg = {
           ...organization,
           features: ['anr-improvements'],
@@ -991,10 +994,11 @@ describe('Threads', function () {
           organization: newOrg,
         };
         render(<Threads {...newProps} />, {organization: newOrg});
+        expect(await screen.findByTestId('event-section-threads')).toBeInTheDocument();
         expect(screen.queryByText('Thread Tags')).not.toBeInTheDocument();
       });
 
-      it('maps android vm states to java vm states', function () {
+      it('maps android vm states to java vm states', async function () {
         const newEvent = {...event};
         const threadsEntry = newEvent.entries[1].data as React.ComponentProps<
           typeof Threads
@@ -1049,7 +1053,7 @@ describe('Threads', function () {
         const newProps = {...props, event: newEvent, organization: newOrg};
         render(<Threads {...newProps} />, {organization: newOrg});
         // Title
-        expect(screen.getByTestId('thread-selector')).toBeInTheDocument();
+        expect(await screen.findByTestId('thread-selector')).toBeInTheDocument();
 
         expect(screen.getByText('Threads')).toBeInTheDocument();
         expect(screen.getByText('Thread State')).toBeInTheDocument();
@@ -1200,7 +1204,7 @@ describe('Threads', function () {
         expect(screen.getByRole('option', {name: 'Raw stack trace'})).toBeInTheDocument();
       });
 
-      it('uses thread label in selector if name not available', function () {
+      it('uses thread label in selector if name not available', async function () {
         const newEvent = {...event};
         const threadsEntry = newEvent.entries[1].data as React.ComponentProps<
           typeof Threads
@@ -1249,7 +1253,7 @@ describe('Threads', function () {
         const newProps = {...props, event: newEvent};
         render(<Threads {...newProps} />, {organization});
         // Title
-        const threadSelector = screen.getByTestId('thread-selector');
+        const threadSelector = await screen.findByTestId('thread-selector');
         expect(threadSelector).toBeInTheDocument();
         within(threadSelector).getByText('ViewController.causeCrash');
       });

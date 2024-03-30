@@ -3,20 +3,18 @@ from __future__ import annotations
 import base64
 import logging
 import os
-import random
 from copy import deepcopy
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jsonschema
 import sentry_sdk
 from django.conf import settings
 from django.urls import reverse
+from rediscluster import RedisCluster
 
 from sentry import features, options
 from sentry.auth.system import get_system_token
-from sentry.debug_files.artifact_bundle_indexing import FlatFileIdentifier, FlatFileMeta
-from sentry.models.artifactbundle import NULL_STRING
 from sentry.models.project import Project
 from sentry.utils import json, metrics, redis, safe
 from sentry.utils.http import get_origins
@@ -139,13 +137,13 @@ HIDDEN_SECRET_SCHEMA = {
 }
 
 
-def _redact_schema(schema: Dict, keys_to_redact: List[str]) -> Dict:
+def _redact_schema(schema: dict, keys_to_redact: list[str]) -> dict:
     """
     Returns a deepcopy of the input schema, overriding any keys in keys_to_redact
     with HIDDEN_SECRET_SCHEMA. Works on nested dictionaries.
     """
 
-    def override_key(schema: Dict, keys_to_redact: List[str]) -> None:
+    def override_key(schema: dict, keys_to_redact: list[str]) -> None:
         for key, value in schema.items():
             if key in keys_to_redact:
                 schema[key] = HIDDEN_SECRET_SCHEMA
@@ -181,9 +179,9 @@ REDACTED_SOURCES_SCHEMA = {
 LAST_UPLOAD_TTL = 24 * 3600
 
 
-def _get_cluster():
+def _get_cluster() -> RedisCluster:
     cluster_key = settings.SENTRY_DEBUG_FILES_REDIS_CLUSTER
-    return redis.redis_clusters.get(cluster_key)
+    return redis.redis_clusters.get(cluster_key)  # type: ignore[return-value]
 
 
 def _last_upload_key(project_id: int) -> str:
@@ -266,42 +264,7 @@ def get_internal_artifact_lookup_source_url(project: Project):
     )
 
 
-def get_bundle_index_urls(
-    project: Project, release: Optional[str], dist: Optional[str]
-) -> Tuple[Optional[str], Optional[str]]:
-    if random.random() >= options.get("symbolicator.sourcemaps-bundle-index-sample-rate"):
-        return None, None
-
-    base_url = get_internal_artifact_lookup_source_url(project)
-
-    def make_download_url(flat_file_meta: FlatFileMeta):
-        # NOTE: The `download` query-parameter is both used by symbolicator as a cache key,
-        # and it is also used as the download key for the artifact-lookup API.
-        # The artifact-lookup API will ignore the additional timestamp on download.
-        return f"{base_url}?download={flat_file_meta.to_string()}"
-
-    url_index = None
-    identifier = FlatFileIdentifier(
-        project_id=project.id, release=release or NULL_STRING, dist=dist or NULL_STRING
-    )
-    if identifier.is_indexing_by_release():
-        url_meta = identifier.get_flat_file_meta()
-        if url_meta is not None:
-            url_index = make_download_url(url_meta)
-
-    # We query the empty release/dist which is a marker for the debug-id index,
-    # as well as the normal release index if we have a release.
-    debug_id_index = None
-    debug_id_meta = FlatFileIdentifier.for_debug_id(
-        project_id=identifier.project_id
-    ).get_flat_file_meta()
-    if debug_id_meta is not None:
-        debug_id_index = make_download_url(debug_id_meta)
-
-    return debug_id_index, url_index
-
-
-def get_scraping_config(project: Project) -> Dict[str, Any]:
+def get_scraping_config(project: Project) -> dict[str, Any]:
     allow_scraping_org_level = project.organization.get_option("sentry:scrape_javascript", True)
     allow_scraping_project_level = project.get_option("sentry:scrape_javascript", True)
     allow_scraping = allow_scraping_org_level and allow_scraping_project_level
@@ -760,15 +723,31 @@ def capture_apple_symbol_stats(json):
             # For now, we are only interested in rough numbers.
 
     if eligible_symbols:
+        # This metric was added to test some discrepancy between internal metrics. We want to remove this after the
+        # investigation is done.
+        metrics.incr("symbol_test_metric", amount=1, sample_rate=1.0)
+
         metrics.incr(
-            "apple_symbol_availability", amount=neither_has_symbol, tags={"availability": "neither"}
+            "apple_symbol_availability",
+            amount=neither_has_symbol,
+            tags={"availability": "neither"},
+            sample_rate=1.0,
         )
         metrics.incr(
-            "apple_symbol_availability", amount=both_have_symbol, tags={"availability": "both"}
+            "apple_symbol_availability",
+            amount=both_have_symbol,
+            tags={"availability": "both"},
+            sample_rate=1.0,
         )
         metrics.incr(
-            "apple_symbol_availability", amount=old_has_symbol, tags={"availability": "old"}
+            "apple_symbol_availability",
+            amount=old_has_symbol,
+            tags={"availability": "old"},
+            sample_rate=1.0,
         )
         metrics.incr(
-            "apple_symbol_availability", amount=symx_has_symbol, tags={"availability": "symx"}
+            "apple_symbol_availability",
+            amount=symx_has_symbol,
+            tags={"availability": "symx"},
+            sample_rate=1.0,
         )

@@ -10,10 +10,7 @@ import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilt
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
 import {RateUnit} from 'sentry/utils/discover/fields';
-import {
-  PageErrorAlert,
-  PageErrorProvider,
-} from 'sentry/utils/performance/contexts/pageError';
+import {PageAlert, PageAlertProvider} from 'sentry/utils/performance/contexts/pageAlert';
 import useOrganization from 'sentry/utils/useOrganization';
 import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import ResourceView, {
@@ -25,7 +22,7 @@ import {
   useResourceModuleFilters,
 } from 'sentry/views/performance/browser/resources/utils/useResourceFilters';
 import {DEFAULT_RESOURCE_FILTERS} from 'sentry/views/performance/browser/resources/utils/useResourcesQuery';
-import {ModulePageProviders} from 'sentry/views/performance/database/modulePageProviders';
+import {ModulePageProviders} from 'sentry/views/performance/modulePageProviders';
 import {DomainSelector} from 'sentry/views/starfish/views/spans/selectors/domainSelector';
 
 const {SPAN_OP, SPAN_DOMAIN} = BrowserStarfishFields;
@@ -40,8 +37,9 @@ function ResourcesLandingPage() {
     <ModulePageProviders
       title={[t('Performance'), t('Resources')].join(' — ')}
       baseURL="/performance/browser/resources"
+      features="starfish-browser-resource-module-ui"
     >
-      <PageErrorProvider>
+      <PageAlertProvider>
         <Layout.Header>
           <Layout.HeaderContent>
             <Breadcrumbs
@@ -63,7 +61,7 @@ function ResourcesLandingPage() {
         <Layout.Body>
           <Layout.Main fullWidth>
             <FloatingFeedbackWidget />
-            <PageErrorAlert />
+            <PageAlert />
             <FilterOptionsContainer columnCount={2}>
               <PageFilterBar condensed>
                 <ProjectPageFilter />
@@ -82,7 +80,7 @@ function ResourcesLandingPage() {
             <ResourceView />
           </Layout.Main>
         </Layout.Body>
-      </PageErrorProvider>
+      </PageAlertProvider>
     </ModulePageProviders>
   );
 }

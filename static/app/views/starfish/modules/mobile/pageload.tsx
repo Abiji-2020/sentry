@@ -1,6 +1,7 @@
 import {useMemo} from 'react';
 import styled from '@emotion/styled';
 
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
 import ErrorBoundary from 'sentry/components/errorBoundary';
 import FloatingFeedbackWidget from 'sentry/components/feedback/widget/floatingFeedbackWidget';
 import * as Layout from 'sentry/components/layouts/thirds';
@@ -12,16 +13,15 @@ import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilt
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
 import {space} from 'sentry/styles/space';
-import {
-  PageErrorAlert,
-  PageErrorProvider,
-} from 'sentry/utils/performance/contexts/pageError';
+import {PageAlert, PageAlertProvider} from 'sentry/utils/performance/contexts/pageAlert';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
 import useProjects from 'sentry/utils/useProjects';
+import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import {useOnboardingProject} from 'sentry/views/performance/browser/webVitals/utils/useOnboardingProject';
 import Onboarding from 'sentry/views/performance/onboarding';
 import {ReleaseComparisonSelector} from 'sentry/views/starfish/components/releaseSelector';
+import {ROUTE_NAMES} from 'sentry/views/starfish/utils/routeNames';
 import {ScreensView, YAxis} from 'sentry/views/starfish/views/screens';
 import {PlatformSelector} from 'sentry/views/starfish/views/screens/platformSelector';
 import {isCrossPlatform} from 'sentry/views/starfish/views/screens/utils';
@@ -40,13 +40,25 @@ export default function PageloadModule() {
   }, [projects, selection.projects]);
 
   return (
-    <SentryDocumentTitle title={t('Mobile')} orgSlug={organization.slug}>
+    <SentryDocumentTitle title={t('Screen Loads')} orgSlug={organization.slug}>
       <Layout.Page>
-        <PageErrorProvider>
+        <PageAlertProvider>
           <Layout.Header>
             <Layout.HeaderContent>
+              <Breadcrumbs
+                crumbs={[
+                  {
+                    label: t('Performance'),
+                    to: normalizeUrl(`/organizations/${organization.slug}/performance/`),
+                    preservePageFilters: true,
+                  },
+                  {
+                    label: ROUTE_NAMES.pageload,
+                  },
+                ]}
+              />
               <HeaderWrapper>
-                <Layout.Title>{t('Mobile')}</Layout.Title>
+                <Layout.Title>{t('Screen Loads')}</Layout.Title>
                 {organization.features.includes(
                   'performance-screens-platform-selector'
                 ) &&
@@ -59,7 +71,7 @@ export default function PageloadModule() {
           <Layout.Body>
             <FloatingFeedbackWidget />
             <Layout.Main fullWidth>
-              <PageErrorAlert />
+              <PageAlert />
               <PageFiltersContainer>
                 <Container>
                   <PageFilterBar condensed>
@@ -89,7 +101,7 @@ export default function PageloadModule() {
               </PageFiltersContainer>
             </Layout.Main>
           </Layout.Body>
-        </PageErrorProvider>
+        </PageAlertProvider>
       </Layout.Page>
     </SentryDocumentTitle>
   );

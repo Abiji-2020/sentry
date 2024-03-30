@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import copy
-from typing import Mapping, MutableMapping, TypeVar
+from collections.abc import Mapping, MutableMapping
+from typing import TypeVar
 
+import sentry_sdk
 from django.conf import settings
 
 K = TypeVar("K")
@@ -92,6 +94,7 @@ class CanonicalKeyDict(MutableMapping[K, V]):
         self.legacy = legacy
         self.__init(data)
 
+    @sentry_sdk.tracing.trace
     def __init(self, data: Mapping[K, V]) -> None:
         legacy = self.legacy
         if legacy is None:

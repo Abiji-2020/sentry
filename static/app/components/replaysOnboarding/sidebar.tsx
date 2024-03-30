@@ -1,4 +1,5 @@
-import {Fragment, ReactNode, useEffect, useMemo, useState} from 'react';
+import type {ReactNode} from 'react';
+import {Fragment, useEffect, useMemo, useState} from 'react';
 import styled from '@emotion/styled';
 import {PlatformIcon} from 'platformicons';
 
@@ -9,10 +10,10 @@ import {CompactSelect} from 'sentry/components/compactSelect';
 import RadioGroup from 'sentry/components/forms/controls/radioGroup';
 import IdBadge from 'sentry/components/idBadge';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
+import useCurrentProjectState from 'sentry/components/onboarding/gettingStartedDoc/utils/useCurrentProjectState';
 import useOnboardingDocs from 'sentry/components/onboardingWizard/useOnboardingDocs';
 import {PlatformOptionDropdown} from 'sentry/components/replaysOnboarding/platformOptionDropdown';
 import {ReplayOnboardingLayout} from 'sentry/components/replaysOnboarding/replayOnboardingLayout';
-import useCurrentProjectState from 'sentry/components/replaysOnboarding/useCurrentProjectState';
 import useLoadOnboardingDoc from 'sentry/components/replaysOnboarding/useLoadOnboardingDoc';
 import {
   generateDocKeys,
@@ -21,20 +22,22 @@ import {
 } from 'sentry/components/replaysOnboarding/utils';
 import {DocumentationWrapper} from 'sentry/components/sidebar/onboardingStep';
 import SidebarPanel from 'sentry/components/sidebar/sidebarPanel';
-import {CommonSidebarProps, SidebarPanelKey} from 'sentry/components/sidebar/types';
+import type {CommonSidebarProps} from 'sentry/components/sidebar/types';
+import {SidebarPanelKey} from 'sentry/components/sidebar/types';
 import TextOverflow from 'sentry/components/textOverflow';
 import {
   backend,
   replayBackendPlatforms,
   replayFrontendPlatforms,
   replayJsLoaderInstructionsPlatformList,
+  replayOnboardingPlatforms,
   replayPlatforms,
 } from 'sentry/data/platformCategories';
 import platforms, {otherPlatform} from 'sentry/data/platforms';
 import {t, tct} from 'sentry/locale';
 import pulsingIndicatorStyles from 'sentry/styles/pulsingIndicator';
 import {space} from 'sentry/styles/space';
-import {PlatformKey, Project, SelectValue} from 'sentry/types';
+import type {PlatformKey, Project, SelectValue} from 'sentry/types';
 import EventWaiter from 'sentry/utils/eventWaiter';
 import useApi from 'sentry/utils/useApi';
 import useOrganization from 'sentry/utils/useOrganization';
@@ -57,6 +60,9 @@ function ReplaysOnboardingSidebar(props: CommonSidebarProps) {
     unsupportedProjects,
   } = useCurrentProjectState({
     currentPanel,
+    targetPanel: SidebarPanelKey.REPLAYS_ONBOARDING,
+    onboardingPlatforms: replayOnboardingPlatforms,
+    allPlatforms: replayPlatforms,
   });
 
   const projectSelectOptions = useMemo(() => {

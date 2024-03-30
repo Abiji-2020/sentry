@@ -4,9 +4,8 @@ import io
 import os
 import tarfile
 import tempfile
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Tuple, Type
 from unittest.mock import patch
 
 import pytest
@@ -30,7 +29,7 @@ from sentry.backup.imports import (
     import_in_user_scope,
 )
 from sentry.backup.scopes import ExportScope, ImportScope, RelocationScope
-from sentry.incidents.models import AlertRule, AlertRuleThresholdType
+from sentry.incidents.models.alert_rule import AlertRule, AlertRuleThresholdType
 from sentry.models.actor import ACTOR_TYPES, Actor
 from sentry.models.apitoken import DEFAULT_EXPIRATION, ApiToken, generate_token
 from sentry.models.authenticator import Authenticator
@@ -80,7 +79,7 @@ from sentry.testutils.helpers.backups import (
     is_control_model,
 )
 from sentry.testutils.hybrid_cloud import use_split_dbs
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.utils import json
 from tests.sentry.backup import (
     expect_models,
@@ -97,7 +96,6 @@ class ImportTestCase(BackupTestCase):
         return tmp_path
 
 
-@region_silo_test
 class SanitizationTests(ImportTestCase):
     """
     Ensure that potentially damaging data is properly scrubbed at import time.
@@ -124,7 +122,9 @@ class SanitizationTests(ImportTestCase):
             assert UserEmail.objects.count() == 4
             assert UserEmail.objects.filter(is_verified=True).count() == 0
             assert (
-                UserEmail.objects.filter(date_hash_added__lt=datetime(2023, 7, 1, 0, 0)).count()
+                UserEmail.objects.filter(
+                    date_hash_added__lt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+                ).count()
                 == 0
             )
             assert (
@@ -163,7 +163,9 @@ class SanitizationTests(ImportTestCase):
             assert UserEmail.objects.count() == 4
             assert UserEmail.objects.filter(is_verified=True).count() == 0
             assert (
-                UserEmail.objects.filter(date_hash_added__lt=datetime(2023, 7, 1, 0, 0)).count()
+                UserEmail.objects.filter(
+                    date_hash_added__lt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+                ).count()
                 == 0
             )
             assert (
@@ -212,7 +214,9 @@ class SanitizationTests(ImportTestCase):
             assert UserEmail.objects.count() == 4
             assert UserEmail.objects.filter(is_verified=True).count() == 0
             assert (
-                UserEmail.objects.filter(date_hash_added__lt=datetime(2023, 7, 1, 0, 0)).count()
+                UserEmail.objects.filter(
+                    date_hash_added__lt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+                ).count()
                 == 0
             )
             assert (
@@ -258,7 +262,9 @@ class SanitizationTests(ImportTestCase):
             assert UserEmail.objects.count() == 4
             assert UserEmail.objects.filter(is_verified=True).count() == 4
             assert (
-                UserEmail.objects.filter(date_hash_added__lt=datetime(2023, 7, 1, 0, 0)).count()
+                UserEmail.objects.filter(
+                    date_hash_added__lt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+                ).count()
                 == 4
             )
             assert (
@@ -410,8 +416,12 @@ class SanitizationTests(ImportTestCase):
             assert UserIP.objects.filter(region_code="CA").exists()
 
             # Unlike global scope, this time must be reset.
-            assert UserIP.objects.filter(last_seen__gt=datetime(2023, 7, 1, 0, 0)).exists()
-            assert UserIP.objects.filter(first_seen__gt=datetime(2023, 7, 1, 0, 0)).exists()
+            assert UserIP.objects.filter(
+                last_seen__gt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+            ).exists()
+            assert UserIP.objects.filter(
+                first_seen__gt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+            ).exists()
 
     @patch("sentry.models.userip.geo_by_addr")
     def test_good_regional_user_ip_in_global_scope(self, mock_geo_by_addr):
@@ -442,8 +452,12 @@ class SanitizationTests(ImportTestCase):
             assert UserIP.objects.filter(region_code="CA").exists()
 
             # Unlike org/user scope, this must NOT be reset.
-            assert not UserIP.objects.filter(last_seen__gt=datetime(2023, 7, 1, 0, 0)).exists()
-            assert not UserIP.objects.filter(first_seen__gt=datetime(2023, 7, 1, 0, 0)).exists()
+            assert not UserIP.objects.filter(
+                last_seen__gt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+            ).exists()
+            assert not UserIP.objects.filter(
+                first_seen__gt=datetime(2023, 7, 1, 0, 0, tzinfo=UTC)
+            ).exists()
 
     # Regression test for getsentry/self-hosted#2468.
     @patch("sentry.models.userip.geo_by_addr")
@@ -666,7 +680,6 @@ class SanitizationTests(ImportTestCase):
                 assert err.value.context.on.model == "sentry.useroption"
 
 
-@region_silo_test
 class SignalingTests(ImportTestCase):
     """
     Some models are automatically created via signals and similar automagic from related models. We
@@ -743,7 +756,6 @@ class SignalingTests(ImportTestCase):
             self.test_import_signaling_organization()
 
 
-@region_silo_test
 class ScopingTests(ImportTestCase):
     """
     Ensures that only models with the allowed relocation scopes are actually imported.
@@ -872,7 +884,6 @@ class ScopingTests(ImportTestCase):
         )
 
 
-@region_silo_test
 class DatabaseResetTests(ImportTestCase):
     """
     Ensure that database resets work as intended in different import scopes.
@@ -958,7 +969,6 @@ class DatabaseResetTests(ImportTestCase):
 
 # Filters should work identically in both silo and monolith modes, so no need to repeat the tests
 # here.
-@region_silo_test
 class DecryptionTests(ImportTestCase):
     """
     Ensures that decryption actually works. We only test one model for each scope, because it's
@@ -966,7 +976,7 @@ class DecryptionTests(ImportTestCase):
     """
 
     @staticmethod
-    def encrypt_json_fixture(tmp_dir) -> Tuple[Path, Path]:
+    def encrypt_json_fixture(tmp_dir) -> tuple[Path, Path]:
         good_file_path = get_fixture_path("backup", "fresh-install.json")
         (priv_key_pem, pub_key_pem) = generate_rsa_key_pair()
 
@@ -992,7 +1002,7 @@ class DecryptionTests(ImportTestCase):
             sha256 = hashes.SHA256()
             mgf = padding.MGF1(algorithm=sha256)
             oaep_padding = padding.OAEP(mgf=mgf, algorithm=sha256, label=None)
-            encrypted_dek = dek_encryption_key.encrypt(data_encryption_key, oaep_padding)  # type: ignore
+            encrypted_dek = dek_encryption_key.encrypt(data_encryption_key, oaep_padding)  # type: ignore[union-attr]
 
             tar_buffer = io.BytesIO()
             with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
@@ -1016,9 +1026,10 @@ class DecryptionTests(ImportTestCase):
             with assume_test_silo_mode(SiloMode.CONTROL):
                 assert User.objects.count() == 0
 
-            with open(tmp_tarball_path, "rb") as tmp_tarball_file, open(
-                tmp_priv_key_path, "rb"
-            ) as tmp_priv_key_file:
+            with (
+                open(tmp_tarball_path, "rb") as tmp_tarball_file,
+                open(tmp_priv_key_path, "rb") as tmp_priv_key_file,
+            ):
                 import_in_user_scope(
                     tmp_tarball_file,
                     decryptor=LocalFileDecryptor(tmp_priv_key_file),
@@ -1033,9 +1044,10 @@ class DecryptionTests(ImportTestCase):
             (tmp_tarball_path, tmp_priv_key_path) = self.encrypt_json_fixture(tmp_dir)
             assert Organization.objects.count() == 0
 
-            with open(tmp_tarball_path, "rb") as tmp_tarball_file, open(
-                tmp_priv_key_path, "rb"
-            ) as tmp_priv_key_file:
+            with (
+                open(tmp_tarball_path, "rb") as tmp_tarball_file,
+                open(tmp_priv_key_path, "rb") as tmp_priv_key_file,
+            ):
                 import_in_organization_scope(
                     tmp_tarball_file,
                     decryptor=LocalFileDecryptor(tmp_priv_key_file),
@@ -1050,9 +1062,10 @@ class DecryptionTests(ImportTestCase):
             with assume_test_silo_mode(SiloMode.CONTROL):
                 assert UserRole.objects.count() == 0
 
-            with open(tmp_tarball_path, "rb") as tmp_tarball_file, open(
-                tmp_priv_key_path, "rb"
-            ) as tmp_priv_key_file:
+            with (
+                open(tmp_tarball_path, "rb") as tmp_tarball_file,
+                open(tmp_priv_key_path, "rb") as tmp_priv_key_file,
+            ):
                 import_in_config_scope(
                     tmp_tarball_file,
                     decryptor=LocalFileDecryptor(tmp_priv_key_file),
@@ -1071,9 +1084,10 @@ class DecryptionTests(ImportTestCase):
                 assert User.objects.count() == 0
                 assert UserRole.objects.count() == 0
 
-            with open(tmp_tarball_path, "rb") as tmp_tarball_file, open(
-                tmp_priv_key_path, "rb"
-            ) as tmp_priv_key_file:
+            with (
+                open(tmp_tarball_path, "rb") as tmp_tarball_file,
+                open(tmp_priv_key_path, "rb") as tmp_priv_key_file,
+            ):
                 import_in_global_scope(
                     tmp_tarball_file,
                     decryptor=LocalFileDecryptor(tmp_priv_key_file),
@@ -1089,7 +1103,6 @@ class DecryptionTests(ImportTestCase):
 
 # Filters should work identically in both silo and monolith modes, so no need to repeat the tests
 # here.
-@region_silo_test
 class FilterTests(ImportTestCase):
     """
     Ensures that filtering operations include the correct models.
@@ -1330,14 +1343,13 @@ class FilterTests(ImportTestCase):
 COLLISION_TESTED: set[NormalizedModelName] = set()
 
 
-@region_silo_test
 class CollisionTests(ImportTestCase):
     """
     Ensure that collisions are properly handled in different flag modes.
     """
 
     @expect_models(COLLISION_TESTED, ApiToken)
-    def test_colliding_api_token(self, expected_models: list[Type[Model]]):
+    def test_colliding_api_token(self, expected_models: list[type[Model]]):
         owner = self.create_exhaustive_user("owner")
         expires_at = timezone.now() + DEFAULT_EXPIRATION
 
@@ -1454,7 +1466,7 @@ class CollisionTests(ImportTestCase):
                 verify_models_in_output(expected_models, json.load(tmp_file))
 
     @expect_models(COLLISION_TESTED, Monitor)
-    def test_colliding_monitor(self, expected_models: list[Type[Model]]):
+    def test_colliding_monitor(self, expected_models: list[type[Model]]):
         owner = self.create_exhaustive_user("owner")
         invited = self.create_exhaustive_user("invited")
         self.create_exhaustive_organization("some-org", owner, invited)
@@ -1485,7 +1497,7 @@ class CollisionTests(ImportTestCase):
                 verify_models_in_output(expected_models, json.load(tmp_file))
 
     @expect_models(COLLISION_TESTED, OrgAuthToken)
-    def test_colliding_org_auth_token(self, expected_models: list[Type[Model]]):
+    def test_colliding_org_auth_token(self, expected_models: list[type[Model]]):
         owner = self.create_exhaustive_user("owner")
         invited = self.create_exhaustive_user("invited")
         member = self.create_exhaustive_user("member")
@@ -1534,7 +1546,7 @@ class CollisionTests(ImportTestCase):
                 verify_models_in_output(expected_models, json.load(tmp_file))
 
     @expect_models(COLLISION_TESTED, ProjectKey)
-    def test_colliding_project_key(self, expected_models: list[Type[Model]]):
+    def test_colliding_project_key(self, expected_models: list[type[Model]]):
         owner = self.create_exhaustive_user("owner")
         invited = self.create_exhaustive_user("invited")
         member = self.create_exhaustive_user("member")
@@ -1573,7 +1585,7 @@ class CollisionTests(ImportTestCase):
         strict=True,
     )
     @expect_models(COLLISION_TESTED, QuerySubscription)
-    def test_colliding_query_subscription(self, expected_models: list[Type[Model]]):
+    def test_colliding_query_subscription(self, expected_models: list[type[Model]]):
         # We need a celery task running to properly test the `subscription_id` assignment, otherwise
         # its value just defaults to `None`.
         with self.tasks():
@@ -1624,7 +1636,7 @@ class CollisionTests(ImportTestCase):
                     verify_models_in_output(expected_models, json.load(tmp_file))
 
     @expect_models(COLLISION_TESTED, SavedSearch)
-    def test_colliding_saved_search(self, expected_models: list[Type[Model]]):
+    def test_colliding_saved_search(self, expected_models: list[type[Model]]):
         self.create_organization("some-org", owner=self.user)
         SavedSearch.objects.create(
             name="Global Search",
@@ -1655,7 +1667,7 @@ class CollisionTests(ImportTestCase):
 
     @expect_models(COLLISION_TESTED, ControlOption, Option, Relay, RelayUsage, UserRole)
     def test_colliding_configs_overwrite_configs_enabled_in_config_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         owner = self.create_exhaustive_user("owner", is_admin=True)
         self.create_exhaustive_global_configs(owner)
@@ -1751,7 +1763,7 @@ class CollisionTests(ImportTestCase):
 
     @expect_models(COLLISION_TESTED, ControlOption, Option, Relay, RelayUsage, UserRole)
     def test_colliding_configs_overwrite_configs_disabled_in_config_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         owner = self.create_exhaustive_user("owner", is_admin=True)
         self.create_exhaustive_global_configs(owner)
@@ -1843,7 +1855,7 @@ class CollisionTests(ImportTestCase):
 
     @expect_models(COLLISION_TESTED, Email, User, UserEmail, UserIP)
     def test_colliding_user_with_merging_enabled_in_user_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         self.create_exhaustive_user(username="owner", email="importing@example.com")
 
@@ -1889,7 +1901,7 @@ class CollisionTests(ImportTestCase):
 
     @expect_models(COLLISION_TESTED, Email, User, UserEmail, UserIP)
     def test_colliding_user_with_merging_disabled_in_user_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         self.create_exhaustive_user(username="owner", email="importing@example.com")
 
@@ -1937,7 +1949,7 @@ class CollisionTests(ImportTestCase):
         COLLISION_TESTED, Email, Organization, OrganizationMember, User, UserEmail, UserIP
     )
     def test_colliding_user_with_merging_enabled_in_organization_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         owner = self.create_exhaustive_user(username="owner", email="importing@example.com")
         self.create_organization("some-org", owner=owner)
@@ -2014,7 +2026,7 @@ class CollisionTests(ImportTestCase):
         COLLISION_TESTED, Email, Organization, OrganizationMember, User, UserEmail, UserIP
     )
     def test_colliding_user_with_merging_disabled_in_organization_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         owner = self.create_exhaustive_user(username="owner", email="importing@example.com")
         self.create_organization("some-org", owner=owner)
@@ -2093,7 +2105,7 @@ class CollisionTests(ImportTestCase):
 
     @expect_models(COLLISION_TESTED, Email, User, UserEmail, UserIP, UserPermission)
     def test_colliding_user_with_merging_enabled_in_config_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         self.create_exhaustive_user(username="owner", email="importing@example.com", is_admin=True)
 
@@ -2143,7 +2155,7 @@ class CollisionTests(ImportTestCase):
 
     @expect_models(COLLISION_TESTED, Email, User, UserEmail, UserIP, UserPermission)
     def test_colliding_user_with_merging_disabled_in_config_scope(
-        self, expected_models: list[Type[Model]]
+        self, expected_models: list[type[Model]]
     ):
         self.create_exhaustive_user(username="owner", email="importing@example.com", is_admin=True)
 
@@ -2196,7 +2208,6 @@ CUSTOM_IMPORT_BEHAVIOR_TESTED: set[NormalizedModelName] = set()
 
 # There is no need to in both monolith and region mode for model-level unit tests - region mode
 # testing along should suffice.
-@region_silo_test
 class CustomImportBehaviorTests(ImportTestCase):
     """
     Test bespoke, per-model behavior. Since these tests are relatively expensive to set up and tear
@@ -2206,7 +2217,7 @@ class CustomImportBehaviorTests(ImportTestCase):
 
     # TODO(hybrid-cloud): actor refactor. Remove this test case when done.
     @expect_models(CUSTOM_IMPORT_BEHAVIOR_TESTED, Actor, AlertRule)
-    def test_alert_rule_with_owner_id(self, expected_models: list[Type[Model]]):
+    def test_alert_rule_with_owner_id(self, expected_models: list[type[Model]]):
         user = self.create_user()
         org = self.create_organization(name="test-org", owner=user)
         team = self.create_team(name="test-team", organization=org)
@@ -2304,7 +2315,7 @@ class CustomImportBehaviorTests(ImportTestCase):
                 verify_models_in_output(expected_models, json.load(tmp_file))
 
     @expect_models(CUSTOM_IMPORT_BEHAVIOR_TESTED, OrganizationMember)
-    def test_organization_member_inviter_id(self, expected_models: list[Type[Model]]):
+    def test_organization_member_inviter_id(self, expected_models: list[type[Model]]):
         admin = self.create_exhaustive_user("admin", email="admin@test.com", is_superuser=True)
         owner = self.create_exhaustive_user("owner", email="owner@test.com")
         member = self.create_exhaustive_user("member", email="member@test.com")
@@ -2366,6 +2377,68 @@ class CustomImportBehaviorTests(ImportTestCase):
                 email="invited-by-owner@test.com",
                 inviter_id__isnull=False,
             ).exists()
+
+            with open(tmp_path, "rb") as tmp_file:
+                verify_models_in_output(expected_models, json.load(tmp_file))
+
+    @expect_models(CUSTOM_IMPORT_BEHAVIOR_TESTED, Project)
+    def test_project_ids_retained_in_global_scope(self, expected_models: list[type[Model]]):
+        owner = self.create_user("testing@example.com")
+        org = self.create_organization(name="Some Org", owner=owner)
+        team = self.create_team(organization=org, name="Some Team")
+
+        # Only the sparse ids of projects 2 and 4 remain.
+        proj1 = self.create_project(organization=org, teams=[team], name="Project Foo")
+        proj2 = self.create_project(organization=org, teams=[team], name="Project Bar")
+        proj3 = self.create_project(organization=org, teams=[team], name="Project Baz")
+        proj4 = self.create_project(organization=org, teams=[team], name="Project Qux")
+        proj1.delete()
+        proj3.delete()
+        existing_proj_ids = [proj2.pk, proj4.pk]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = self.export_to_tmp_file_and_clear_database(tmp_dir)
+            with open(tmp_path, "rb") as tmp_file:
+                import_in_global_scope(
+                    tmp_file,
+                    printer=NOOP_PRINTER,
+                )
+
+            imported_proj_ids = list(Project.objects.all().values_list("id", flat=True))
+
+            # Original IDs are retained, to preserve DSNs after a global import.
+            assert set(imported_proj_ids) == set(existing_proj_ids)
+
+            with open(tmp_path, "rb") as tmp_file:
+                verify_models_in_output(expected_models, json.load(tmp_file))
+
+    @expect_models(CUSTOM_IMPORT_BEHAVIOR_TESTED, Project)
+    def test_project_ids_reassigned_in_organization_scope(self, expected_models: list[type[Model]]):
+        owner = self.create_user("testing@example.com")
+        org = self.create_organization(name="Some Org", owner=owner)
+        team = self.create_team(organization=org, name="Some Team")
+
+        # Only the sparse ids of projects 2 and 4 remain.
+        proj1 = self.create_project(organization=org, teams=[team], name="Project Foo")
+        proj2 = self.create_project(organization=org, teams=[team], name="Project Bar")
+        proj3 = self.create_project(organization=org, teams=[team], name="Project Baz")
+        proj4 = self.create_project(organization=org, teams=[team], name="Project Qux")
+        proj1.delete()
+        proj3.delete()
+        existing_proj_ids = [proj2.pk, proj4.pk]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = self.export_to_tmp_file_and_clear_database(tmp_dir)
+            with open(tmp_path, "rb") as tmp_file:
+                import_in_organization_scope(
+                    tmp_file,
+                    printer=NOOP_PRINTER,
+                )
+
+            imported_proj_ids = list(Project.objects.all().values_list("id", flat=True))
+
+            # IDs are re-assigned in non-global import scopes.
+            assert set(imported_proj_ids).isdisjoint(set(existing_proj_ids))
 
             with open(tmp_path, "rb") as tmp_file:
                 verify_models_in_output(expected_models, json.load(tmp_file))

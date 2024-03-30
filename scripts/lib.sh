@@ -69,11 +69,11 @@ EOF
     else
         minor=$(echo "${python_version}" | sed 's/[0-9]*\.\([0-9]*\)\.\([0-9]*\)/\1/')
         patch=$(echo "${python_version}" | sed 's/[0-9]*\.\([0-9]*\)\.\([0-9]*\)/\2/')
-        if [ "$minor" -ne 10 ] || [ "$patch" -lt 12 ]; then
+        if [ "$minor" -ne 11 ] || [ "$patch" -lt 6 ]; then
             cat <<EOF
     ${red}${bold}
     ERROR: You're running a virtualenv with Python ${python_version}.
-    We only support >= 3.10.12, < 3.11.
+    We only support >= 3.11.6, < 3.12.
     Either run "rm -rf ${venv_name} && direnv allow" to
     OR set SENTRY_PYTHON_VERSION=${python_version} to an .env file to bypass this check."
 EOF
@@ -91,7 +91,7 @@ sudo-askpass() {
 }
 
 pip-install() {
-    pip install --constraint requirements-dev-frozen.txt "$@"
+    pip install --constraint "${HERE}/../requirements-dev-frozen.txt" "$@"
 }
 
 upgrade-pip() {
@@ -135,16 +135,8 @@ setup-git() {
 
     echo "--> Installing git hooks"
     mkdir -p .git/hooks && cd .git/hooks && ln -sf ../../config/hooks/* ./ && cd - || exit
-    # shellcheck disable=SC2016
-    python3 -c '' || (
-        echo 'Please run `make setup-pyenv` to install the required Python 3 version.'
-        exit 1
-    )
-    if ! require pre-commit; then
-        pip-install -r requirements-dev.txt
-    fi
-    pre-commit install --install-hooks
-    echo ""
+
+    .venv/bin/pre-commit install --install-hooks
 }
 
 node-version-check() {
@@ -177,7 +169,7 @@ develop() {
 }
 
 init-config() {
-    sentry init --dev
+    sentry init --dev --no-clobber
 }
 
 run-dependent-services() {
@@ -194,6 +186,7 @@ create-db() {
 }
 
 apply-migrations() {
+    create-db
     echo "--> Applying migrations"
     sentry upgrade --noinput
 }
@@ -219,7 +212,6 @@ bootstrap() {
     develop
     init-config
     run-dependent-services
-    create-db
     apply-migrations
     create-superuser
     # Load mocks requires a superuser
@@ -251,18 +243,9 @@ drop-db() {
 
 reset-db() {
     drop-db
-    create-db
     apply-migrations
     create-superuser
     echo 'Finished resetting database. To load mock data, run `./bin/load-mocks`'
-}
-
-prerequisites() {
-    if [ -z "${CI+x}" ]; then
-        brew update -q && brew bundle -q
-    else
-        HOMEBREW_NO_AUTO_UPDATE=on brew install pyenv
-    fi
 }
 
 direnv-help() {

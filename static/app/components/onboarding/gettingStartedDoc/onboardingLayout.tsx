@@ -7,7 +7,7 @@ import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
 import {AuthTokenGeneratorProvider} from 'sentry/components/onboarding/gettingStartedDoc/authTokenGenerator';
 import {Step} from 'sentry/components/onboarding/gettingStartedDoc/step';
-import {
+import type {
   ConfigType,
   Docs,
   DocsParams,
@@ -72,6 +72,7 @@ export function OnboardingLayout({
       platformKey,
       projectId,
       projectSlug,
+      isFeedbackSelected: false,
       isPerformanceSelected: activeProductSelection.includes(
         ProductSolution.PERFORMANCE_MONITORING
       ),

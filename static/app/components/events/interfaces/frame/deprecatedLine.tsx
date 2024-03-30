@@ -9,32 +9,28 @@ import ErrorBoundary from 'sentry/components/errorBoundary';
 import {analyzeFrameForRootCause} from 'sentry/components/events/interfaces/analyzeFrames';
 import LeadHint from 'sentry/components/events/interfaces/frame/line/leadHint';
 import {StacktraceLink} from 'sentry/components/events/interfaces/frame/stacktraceLink';
-import {
-  FrameSourceMapDebuggerData,
-  SourceMapsDebuggerModal,
-} from 'sentry/components/events/interfaces/sourceMapsDebuggerModal';
+import type {FrameSourceMapDebuggerData} from 'sentry/components/events/interfaces/sourceMapsDebuggerModal';
+import {SourceMapsDebuggerModal} from 'sentry/components/events/interfaces/sourceMapsDebuggerModal';
 import {getThreadById} from 'sentry/components/events/interfaces/utils';
 import StrictClick from 'sentry/components/strictClick';
-import Tag from 'sentry/components/tag';
+import {Tag} from 'sentry/components/tag';
 import {IconChevron, IconFix, IconRefresh} from 'sentry/icons';
 import {t, tn} from 'sentry/locale';
 import DebugMetaStore from 'sentry/stores/debugMetaStore';
 import {space} from 'sentry/styles/space';
-import {
-  Config,
+import type {
   Frame,
   Organization,
   PlatformKey,
   SentryAppComponent,
   SentryAppSchemaStacktraceLink,
 } from 'sentry/types';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 import {trackAnalytics} from 'sentry/utils/analytics';
-import withConfig from 'sentry/utils/withConfig';
 import withOrganization from 'sentry/utils/withOrganization';
 import withSentryAppComponents from 'sentry/utils/withSentryAppComponents';
 
-import DebugImage from '../debugMeta/debugImage';
+import type DebugImage from '../debugMeta/debugImage';
 import {combineStatus} from '../debugMeta/utils';
 
 import Context from './context';
@@ -49,7 +45,6 @@ import {
   hasContextRegisters,
   hasContextSource,
   hasContextVars,
-  hasStacktraceLinkInFrameFeature,
   isExpandable,
 } from './utils';
 
@@ -57,12 +52,13 @@ const VALID_SOURCE_MAP_DEBUGGER_FILE_ENDINGS = [
   '.js',
   '.mjs',
   '.cjs',
-  '.jsbundle', // React Native file ending
+  '.jsbundle', // React Native iOS file ending
+  '.bundle', // React Native Android file ending
+  '.hbc', // Hermes Bytecode (from Expo updates) file ending
   '.js.gz', // file ending idiomatic for Ember.js
 ];
 
 export interface DeprecatedLineProps {
-  config: Config;
   data: Frame;
   event: Event;
   registers: Record<string, string>;
@@ -147,7 +143,7 @@ export class DeprecatedLine extends Component<Props, State> {
   };
 
   toggleContext = evt => {
-    evt && evt.preventDefault();
+    evt?.preventDefault();
 
     this.setState({
       isExpanded: !this.state.isExpanded,
@@ -241,7 +237,7 @@ export class DeprecatedLine extends Component<Props, State> {
 
   leadsToApp() {
     const {data, nextFrame} = this.props;
-    return !data.inApp && ((nextFrame && nextFrame.inApp) || !nextFrame);
+    return !data.inApp && (nextFrame?.inApp || !nextFrame);
   }
 
   isFoundByStackScanning() {
@@ -348,18 +344,13 @@ export class DeprecatedLine extends Component<Props, State> {
 
     const activeLineNumber = data.lineNo;
     const contextLine = (data?.context || []).find(l => l[0] === activeLineNumber);
-    const hasInFrameFeature = hasStacktraceLinkInFrameFeature(
-      organization,
-      this.props.config?.user
-    );
     // InApp or .NET because of: https://learn.microsoft.com/en-us/dotnet/standard/library-guidance/sourcelink
     const hasStacktraceLink =
       (data.inApp || event.platform === 'csharp') &&
       !!data.filename &&
       (isHovering || isExpanded);
-    const showStacktraceLinkInFrame = hasStacktraceLink && hasInFrameFeature;
     const showSentryAppStacktraceLinkInFrame =
-      showStacktraceLinkInFrame && this.props.components.length > 0;
+      hasStacktraceLink && this.props.components.length > 0;
 
     return (
       <StrictClick onClick={this.isExpandable() ? this.toggleContext : undefined}>
@@ -391,7 +382,7 @@ export class DeprecatedLine extends Component<Props, State> {
                 {t('Suspect Frame')}
               </Tag>
             ) : null}
-            {showStacktraceLinkInFrame && (
+            {hasStacktraceLink && !shouldShowSourceMapDebuggerButton && (
               <ErrorBoundary>
                 <StacktraceLink
                   frame={data}
@@ -491,16 +482,15 @@ export class DeprecatedLine extends Component<Props, State> {
           isExpanded={this.state.isExpanded}
           registersMeta={this.props.registersMeta}
           frameMeta={this.props.frameMeta}
+          platform={this.props.platform}
         />
       </StyledLi>
     );
   }
 }
 
-export default withConfig(
-  withOrganization(
-    withSentryAppComponents(DeprecatedLine, {componentType: 'stacktrace-link'})
-  )
+export default withOrganization(
+  withSentryAppComponents(DeprecatedLine, {componentType: 'stacktrace-link'})
 );
 
 const RepeatedFrames = styled('div')`

@@ -1,11 +1,12 @@
-import {CSSProperties, useCallback} from 'react';
+import type {CSSProperties} from 'react';
+import {useCallback} from 'react';
 import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 
 import {fetchTagValues} from 'sentry/actionCreators/tags';
 import SmartSearchBar from 'sentry/components/smartSearchBar';
 import {t} from 'sentry/locale';
-import {Tag, TagCollection, TagValue} from 'sentry/types';
+import type {Tag, TagCollection, TagValue} from 'sentry/types';
 import {isAggregateField} from 'sentry/utils/discover/fields';
 import {
   FEEDBACK_FIELDS,
@@ -26,7 +27,6 @@ const EXCLUDED_TAGS = [
   FeedbackFieldKey.EMAIL,
   FeedbackFieldKey.LOCALE_LANG,
   FeedbackFieldKey.LOCALE_TIMEZONE,
-  FeedbackFieldKey.MESSAGE,
   FeedbackFieldKey.NAME,
   FieldKey.PLATFORM,
   FeedbackFieldKey.OS_VERSION,

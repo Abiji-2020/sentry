@@ -2,13 +2,14 @@ from time import time
 from typing import Any
 
 import responses
+from requests.exceptions import ConnectionError
 
 from sentry.integrations.bitbucket_server.webhook import PROVIDER_NAME
 from sentry.models.identity import Identity
 from sentry.models.repository import Repository
 from sentry.silo import SiloMode
 from sentry.testutils.cases import APITestCase
-from sentry.testutils.silo import assume_test_silo_mode, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode
 from sentry.utils import json
 from sentry_plugins.bitbucket.testutils import REFS_CHANGED_EXAMPLE
 
@@ -69,13 +70,11 @@ class WebhookTestBase(APITestCase):
         )
 
 
-@region_silo_test
 class WebhookGetTest(WebhookTestBase):
     def test_get_request_fails(self):
         self.get_error_response(self.organization.id, self.integration.id, status_code=405)
 
 
-@region_silo_test
 class WebhookPostTest(WebhookTestBase):
     method = "post"
 
@@ -98,7 +97,6 @@ class WebhookPostTest(WebhookTestBase):
         )
 
 
-@region_silo_test
 class RefsChangedWebhookTest(WebhookTestBase):
     method = "post"
 
@@ -160,4 +158,46 @@ class RefsChangedWebhookTest(WebhookTestBase):
             raw_data=json.dumps(payload),
             extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
             status_code=400,
+        )
+
+    @responses.activate
+    def test_handle_unreachable_host(self):
+        responses.add(
+            responses.GET,
+            "https://api.bitbucket.org/rest/api/1.0/projects/my-project/repos/marcos/commits",
+            body=ConnectionError("Unable to reach host: https://api.bitbucket.org"),
+        )
+
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            self.integration.add_organization(self.organization, default_auth_id=self.identity.id)
+
+        self.create_repository()
+
+        payload = {
+            "changes": [
+                {
+                    "fromHash": "hash1",
+                    "ref": {
+                        "displayId": "displayId",
+                        "id": "id",
+                        "type": "'BRANCH'",
+                    },
+                    "refId": "refId",
+                    "toHash": "hash2",
+                    "type": "UPDATE",
+                }
+            ],
+            "repository": {
+                "id": "{b128e0f6-196a-4dde-b72d-f42abc6dc239}",
+                "project": {"key": "my-project"},
+                "slug": "marcos",
+            },
+        }
+
+        self.get_error_response(
+            self.organization.id,
+            self.integration.id,
+            raw_data=json.dumps(payload),
+            extra_headers=dict(HTTP_X_EVENT_KEY="repo:refs_changed"),
+            status_code=409,
         )

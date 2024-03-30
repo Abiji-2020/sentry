@@ -1,4 +1,4 @@
-from typing import Any, List, Tuple
+from typing import Any
 
 from django.db import models
 from django.db.models import Q, UniqueConstraint
@@ -17,7 +17,7 @@ from sentry.models.search_common import SearchType
 class SortOptions:
     DATE = "date"
     NEW = "new"
-    PRIORITY = "priority"
+    TRENDS = "trends"
     FREQ = "freq"
     USER = "user"
     INBOX = "inbox"
@@ -27,7 +27,7 @@ class SortOptions:
         return (
             (cls.DATE, _("Last Seen")),
             (cls.NEW, _("First Seen")),
-            (cls.PRIORITY, _("Priority")),
+            (cls.TRENDS, _("Trends")),
             (cls.FREQ, _("Events")),
             (cls.USER, _("Users")),
             (cls.INBOX, _("Date Added")),
@@ -40,7 +40,7 @@ class Visibility:
     OWNER_PINNED = "owner_pinned"
 
     @classmethod
-    def as_choices(cls) -> List[Tuple[str, Any]]:
+    def as_choices(cls) -> list[tuple[str, Any]]:
         # Note that the pinned value may not always be a visibility we want to
         # expose. The pinned search API explicitly will set this visibility,
         # but the saved search API should not allow it to be set

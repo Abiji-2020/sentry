@@ -1,8 +1,8 @@
 import {Component} from 'react';
 
 import HookStore from 'sentry/stores/hookStore';
-import {Config, Organization, Project} from 'sentry/types';
-import {FeatureDisabledHooks} from 'sentry/types/hooks';
+import type {Config, Organization, Project} from 'sentry/types';
+import type {FeatureDisabledHooks} from 'sentry/types/hooks';
 import {isRenderFunc} from 'sentry/utils/isRenderFunc';
 import withConfig from 'sentry/utils/withConfig';
 import withOrganization from 'sentry/utils/withOrganization';
@@ -44,6 +44,7 @@ type Props = {
    * function.
    */
   hookName?: keyof FeatureDisabledHooks;
+  organizationAllowNull?: undefined | true;
   project?: Project;
   /**
    * Custom renderer function for when the feature is not enabled.
@@ -90,7 +91,8 @@ interface RenderDisabledProps extends FeatureRenderProps {
 export type RenderDisabledFn = (props: RenderDisabledProps) => React.ReactNode;
 
 interface ChildRenderProps extends FeatureRenderProps {
-  renderDisabled?: undefined | boolean | RenderDisabledFn;
+  renderDisabled?: boolean | ((props: any) => React.ReactNode);
+  renderInstallButton?: (props: any) => React.ReactNode;
 }
 
 export type ChildrenRenderFn = (props: ChildRenderProps) => React.ReactNode;
@@ -115,8 +117,8 @@ class Feature extends Component<Props> {
 
     return {
       configFeatures: config.features ? Array.from(config.features) : [],
-      organization: (organization && organization.features) || [],
-      project: (project && project.features) || [],
+      organization: organization?.features ?? [],
+      project: project?.features ?? [],
     };
   }
 
@@ -168,8 +170,8 @@ class Feature extends Component<Props> {
       renderDisabled === false
         ? false
         : typeof renderDisabled === 'function'
-        ? renderDisabled
-        : renderComingSoon;
+          ? renderDisabled
+          : renderComingSoon;
 
     // Override the renderDisabled function with a hook store function if there
     // is one registered for the feature.

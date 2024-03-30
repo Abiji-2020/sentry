@@ -2,12 +2,11 @@
 import {browserHistory, createRoutes, match} from 'react-router';
 import {extraErrorDataIntegration} from '@sentry/integrations';
 import * as Sentry from '@sentry/react';
-import {BrowserTracing} from '@sentry/react';
 import {_browserPerformanceTimeOriginMode} from '@sentry/utils';
-import {Event, IntegrationFn} from '@sentry/types';
+import type {Event} from '@sentry/types';
 
 import {SENTRY_RELEASE_VERSION, SPA_DSN} from 'sentry/constants';
-import {Config} from 'sentry/types';
+import type {Config} from 'sentry/types';
 import {addExtraMeasurements, addUIElementTag} from 'sentry/utils/performanceForSentry';
 import {normalizeUrl} from 'sentry/utils/withDomainRequired';
 import {getErrorDebugIds} from 'sentry/utils/getErrorDebugIds';
@@ -24,6 +23,12 @@ const SPA_MODE_TRACE_PROPAGATION_TARGETS = [
   'dev.getsentry.net',
   'sentry.dev',
 ];
+
+let lastEventId: string | undefined;
+
+export function getLastEventId(): string | undefined {
+  return lastEventId;
+}
 
 // We don't care about recording breadcrumbs for these hosts. These typically
 // pollute our breadcrumbs since they may occur a LOT.
@@ -51,23 +56,16 @@ function getSentryIntegrations(routes?: Function) {
       depth: 6,
     }),
     Sentry.metrics.metricsAggregatorIntegration(),
-    new BrowserTracing({
-      ...(typeof routes === 'function'
-        ? {
-            routingInstrumentation: Sentry.reactRouterV3Instrumentation(
-              browserHistory as any,
-              createRoutes(routes()),
-              match
-            ),
-          }
-        : {}),
+    Sentry.reactRouterV3BrowserTracingIntegration({
+      history: browserHistory as any,
+      routes: typeof routes === 'function' ? createRoutes(routes()) : [],
+      match,
       _experiments: {
         enableInteractions: true,
-        onStartRouteTransaction: Sentry.onProfilingStartRouteTransaction,
       },
+      enableInp: true,
     }),
-    new Sentry.BrowserProfilingIntegration(),
-    JSONSerializationIntegration(),
+    Sentry.browserProfilingIntegration(),
   ];
 
   return integrations;
@@ -159,7 +157,7 @@ export function initializeSdk(config: Config, {routes}: {routes?: Function} = {}
       return crumb;
     },
 
-    beforeSend(event, _hint) {
+    beforeSend(event, hint) {
       if (isFilteredRequestErrorEvent(event) || isEventWithFileUrl(event)) {
         return null;
       }
@@ -167,12 +165,14 @@ export function initializeSdk(config: Config, {routes}: {routes?: Function} = {}
       handlePossibleUndefinedResponseBodyErrors(event);
       addEndpointTagToRequestError(event);
 
+      lastEventId = event.event_id || hint.event_id;
+
       return event;
     },
   });
 
   if (process.env.NODE_ENV !== 'production') {
-    if (sentryConfig.environment === 'development') {
+    if (sentryConfig.environment === 'development' && process.env.NO_SPOTLIGHT !== '1') {
       import('@spotlightjs/spotlight').then(Spotlight => {
         /* #__PURE__ */ Spotlight.init();
       });
@@ -209,10 +209,10 @@ export function initializeSdk(config: Config, {routes}: {routes?: Function} = {}
   };
   debugIdPolyfillEventProcessor.id = 'debugIdPolyfillEventProcessor';
 
-  Sentry.addGlobalEventProcessor(debugIdPolyfillEventProcessor);
+  Sentry.addEventProcessor(debugIdPolyfillEventProcessor);
 
   // Track timeOrigin Selection by the SDK to see if it improves transaction durations
-  Sentry.addGlobalEventProcessor((event: Sentry.Event, _hint?: Sentry.EventHint) => {
+  Sentry.addEventProcessor((event: Sentry.Event, _hint?: Sentry.EventHint) => {
     event.tags = event.tags || {};
     event.tags['timeOrigin.mode'] = _browserPerformanceTimeOriginMode;
     return event;
@@ -309,49 +309,3 @@ export function addEndpointTagToRequestError(event: Event): void {
     event.tags = {...event.tags, endpoint: messageMatch[1]};
   }
 }
-
-/**
- * Custom Sentry integration to instrument JSON.stringify
- * and JSON.parse with spans.
- */
-const JSONSerializationIntegration = (() => {
-  let patched = false;
-  return {
-    name: 'JSONSerialization',
-    setupOnce(): void {
-      if (patched) {
-        return;
-      }
-
-      JSON.stringify = new Proxy(JSON.stringify, {
-        apply(target, thisArg, args) {
-          // Only attach JSON serialization spans to transactions for now
-          const activeSpan = Sentry.getActiveSpan();
-          if (!activeSpan) {
-            return target.apply(thisArg, args);
-          }
-
-          return Sentry.startSpan({op: 'serialize', name: 'JSON.stringify'}, () =>
-            target.apply(thisArg, args)
-          );
-        },
-      });
-
-      JSON.parse = new Proxy(JSON.parse, {
-        apply(target, thisArg, args) {
-          // Only attach JSON serialization spans to transactions for now
-          const activeSpan = Sentry.getActiveSpan();
-          if (!activeSpan) {
-            return target.apply(thisArg, args);
-          }
-
-          return Sentry.startSpan({op: 'parse', name: 'JSON.parse'}, () =>
-            target.apply(thisArg, args)
-          );
-        },
-      });
-
-      patched = true;
-    },
-  };
-}) satisfies IntegrationFn;

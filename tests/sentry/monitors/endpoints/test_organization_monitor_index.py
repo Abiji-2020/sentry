@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 from django.conf import settings
 from django.test.utils import override_settings
+from rest_framework.exceptions import ErrorDetail
 
 from sentry.constants import ObjectStatus
 from sentry.models.rule import Rule, RuleSource
 from sentry.monitors.models import Monitor, MonitorStatus, MonitorType, ScheduleType
+from sentry.quotas.base import SeatAssignmentResult
 from sentry.slug.errors import DEFAULT_SLUG_ERROR_MESSAGE
 from sentry.testutils.cases import MonitorTestCase
-from sentry.testutils.silo import region_silo_test
 from sentry.utils.outcomes import Outcome
 
 
-@region_silo_test
 class ListOrganizationMonitorsTest(MonitorTestCase):
     endpoint = "sentry-api-0-organization-monitor-index"
 
@@ -30,7 +30,8 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
 
     def check_valid_environments_response(self, response, monitor, expected_environments):
         assert {
-            monitor_environment.environment.name for monitor_environment in expected_environments
+            monitor_environment.get_environment().name
+            for monitor_environment in expected_environments
         } == {
             monitor_environment_resp["name"]
             for monitor_environment_resp in monitor.get("environments", [])
@@ -41,9 +42,9 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
         response = self.get_success_response(self.organization.slug)
         self.check_valid_response(response, [monitor])
 
-    def test_sort(self):
-        last_checkin = datetime.now() - timedelta(minutes=1)
-        last_checkin_older = datetime.now() - timedelta(minutes=5)
+    def test_sort_status(self):
+        last_checkin = datetime.now(UTC) - timedelta(minutes=1)
+        last_checkin_older = datetime.now(UTC) - timedelta(minutes=5)
 
         def add_status_monitor(
             env_status_key: str,
@@ -77,8 +78,6 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
         monitor_disabled = add_status_monitor("OK", "DISABLED")
         monitor_error_older_checkin = add_status_monitor("ERROR", "ACTIVE", last_checkin_older)
         monitor_error = add_status_monitor("ERROR")
-        monitor_missed_checkin = add_status_monitor("MISSED_CHECKIN")
-        monitor_timed_out = add_status_monitor("TIMEOUT")
 
         monitor_muted = add_status_monitor("ACTIVE")
         monitor_muted.update(is_muted=True)
@@ -91,14 +90,124 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
             [
                 monitor_error,
                 monitor_error_older_checkin,
-                monitor_timed_out,
-                monitor_missed_checkin,
                 monitor_ok,
                 monitor_active,
                 monitor_muted,
                 monitor_disabled,
             ],
         )
+
+        response = self.get_success_response(
+            self.organization.slug, asc="0", params={"environment": "jungle"}
+        )
+        self.check_valid_response(
+            response,
+            [
+                monitor_disabled,
+                monitor_muted,
+                monitor_active,
+                monitor_ok,
+                monitor_error_older_checkin,
+                monitor_error,
+            ],
+        )
+
+    def test_sort_name(self):
+        monitors = [
+            self._create_monitor(name="Some Monitor"),
+            self._create_monitor(name="A monitor"),
+            self._create_monitor(name="ZA monitor"),
+        ]
+        monitors.sort(key=lambda m: m.name)
+
+        response = self.get_success_response(self.organization.slug, sort="name")
+        self.check_valid_response(response, monitors)
+
+        monitors.reverse()
+        response = self.get_success_response(self.organization.slug, sort="name", asc="0")
+        self.check_valid_response(response, monitors)
+
+    def test_sort_muted(self):
+        monitors = [
+            self._create_monitor(name="Z monitor", is_muted=True),
+            self._create_monitor(name="Y monitor", is_muted=True),
+            self._create_monitor(name="Some Monitor"),
+            self._create_monitor(name="A monitor"),
+            self._create_monitor(name="ZA monitor"),
+        ]
+        monitors.sort(key=lambda m: (m.is_muted, m.name))
+
+        response = self.get_success_response(self.organization.slug, sort="muted")
+        self.check_valid_response(response, monitors)
+
+        monitors.reverse()
+        response = self.get_success_response(self.organization.slug, sort="muted", asc="0")
+        self.check_valid_response(response, monitors)
+
+    def test_sort_muted_envs(self):
+        muted_monitor_1 = self._create_monitor(name="Z monitor", is_muted=True)
+        self._create_monitor_environment(muted_monitor_1, name="prod")
+        muted_monitor_2 = self._create_monitor(name="Y monitor", is_muted=True)
+        self._create_monitor_environment(muted_monitor_2, name="prod")
+        non_muted_monitor_1 = self._create_monitor(name="Some Monitor")
+        self._create_monitor_environment(non_muted_monitor_1, name="prod")
+        non_muted_monitor_2 = self._create_monitor(name="A monitor")
+        self._create_monitor_environment(non_muted_monitor_2, name="prod")
+        muted_env_monitor = self._create_monitor(name="Some Muted Env Monitor")
+        self._create_monitor_environment(
+            muted_env_monitor,
+            name="prod",
+            is_muted=True,
+        )
+        not_muted_env_monitor = self._create_monitor(name="ZA monitor")
+        self._create_monitor_environment(
+            not_muted_env_monitor,
+            name="prod",
+            is_muted=False,
+        )
+        muted_other_env_monitor = self._create_monitor(name="Some muted other Env Monitor")
+        self._create_monitor_environment(muted_other_env_monitor, name="prod")
+        self._create_monitor_environment(
+            muted_other_env_monitor,
+            name="dev",
+            is_muted=True,
+        )
+
+        response = self.get_success_response(self.organization.slug, sort="muted")
+        expected = [
+            non_muted_monitor_2,
+            non_muted_monitor_1,
+            not_muted_env_monitor,
+            muted_env_monitor,
+            muted_other_env_monitor,
+            muted_monitor_2,
+            muted_monitor_1,
+        ]
+        self.check_valid_response(response, expected)
+
+        expected.reverse()
+        response = self.get_success_response(self.organization.slug, sort="muted", asc="0")
+        self.check_valid_response(response, expected)
+
+        response = self.get_success_response(
+            self.organization.slug, sort="muted", environment=["prod"]
+        )
+        expected = [
+            non_muted_monitor_2,
+            non_muted_monitor_1,
+            muted_other_env_monitor,
+            not_muted_env_monitor,
+            muted_env_monitor,
+            muted_monitor_2,
+            muted_monitor_1,
+        ]
+        self.check_valid_response(response, expected)
+
+        expected.reverse()
+        response = self.get_success_response(
+            self.organization.slug, sort="muted", environment=["prod"], asc="0"
+        )
+        self.check_valid_response(response, expected)
 
     def test_all_monitor_environments(self):
         monitor = self._create_monitor()
@@ -126,7 +235,7 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
     def test_monitor_environment_include_new(self):
         monitor = self._create_monitor()
         self._create_monitor_environment(
-            monitor, status=MonitorStatus.OK, last_checkin=datetime.now() - timedelta(minutes=1)
+            monitor, status=MonitorStatus.OK, last_checkin=datetime.now(UTC) - timedelta(minutes=1)
         )
 
         monitor_visible = self._create_monitor(name="visible")
@@ -148,13 +257,13 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
         self._create_monitor_environment(
             monitor,
             status=MonitorStatus.OK,
-            last_checkin=datetime.now() - timedelta(minutes=1),
+            last_checkin=datetime.now(UTC) - timedelta(minutes=1),
         )
         self._create_monitor_environment(
             monitor,
             status=MonitorStatus.PENDING_DELETION,
             name="deleted_environment",
-            last_checkin=datetime.now() - timedelta(minutes=1),
+            last_checkin=datetime.now(UTC) - timedelta(minutes=1),
         )
 
         response = self.get_success_response(self.organization.slug)
@@ -164,7 +273,6 @@ class ListOrganizationMonitorsTest(MonitorTestCase):
         assert response.data[0]["environments"][0]["status"] == "ok"
 
 
-@region_silo_test
 class CreateOrganizationMonitorTest(MonitorTestCase):
     endpoint = "sentry-api-0-organization-monitor-index"
     method = "post"
@@ -345,34 +453,107 @@ class CreateOrganizationMonitorTest(MonitorTestCase):
         assert response.data["status"] == "disabled"
         assert monitor.status == ObjectStatus.DISABLED
 
-    def test_disabled_creating_new_monitor(self):
-        data = {
-            "project": self.project.slug,
-            "name": "My Monitor",
-            "slug": "my-monitor",
-            "type": "cron_job",
-            "config": {"schedule_type": "crontab", "schedule": "@daily"},
-        }
-        with self.feature("organizations:crons-disable-new-projects"):
-            response = self.get_error_response(self.organization.slug, **data, status_code=400)
 
-        assert (
-            response.data
-            == "Creating monitors in projects without pre-existing monitors is temporarily disabled"
+class BulkEditOrganizationMonitorTest(MonitorTestCase):
+    endpoint = "sentry-api-0-organization-monitor-index"
+    method = "put"
+
+    def setUp(self):
+        super().setUp()
+        self.login_as(self.user)
+
+    def test_valid_slugs(self):
+        self._create_monitor(slug="monitor_one")
+        self._create_monitor(slug="monitor_two")
+
+        data = {
+            "slugs": ["monitor_three", "monitor_two"],
+            "isMuted": True,
+        }
+        response = self.get_error_response(self.organization.slug, **data)
+        assert response.status_code == 400
+        assert response.data == {
+            "slugs": [
+                ErrorDetail(string="Not all slugs are valid for this organization.", code="invalid")
+            ]
+        }
+
+    def test_bulk_mute_unmute(self):
+        monitor_one = self._create_monitor(slug="monitor_one")
+        monitor_two = self._create_monitor(slug="monitor_two")
+
+        data = {
+            "slugs": ["monitor_one", "monitor_two"],
+            "isMuted": True,
+        }
+        response = self.get_success_response(self.organization.slug, **data)
+        assert response.status_code == 200
+
+        monitor_one.refresh_from_db()
+        monitor_two.refresh_from_db()
+        assert monitor_one.is_muted
+        assert monitor_two.is_muted
+
+        data = {
+            "slugs": ["monitor_one", "monitor_two"],
+            "isMuted": False,
+        }
+        response = self.get_success_response(self.organization.slug, **data)
+        assert response.status_code == 200
+
+        monitor_one.refresh_from_db()
+        monitor_two.refresh_from_db()
+        assert not monitor_one.is_muted
+        assert not monitor_two.is_muted
+
+    def test_bulk_disable_enable(self):
+        monitor_one = self._create_monitor(slug="monitor_one")
+        monitor_two = self._create_monitor(slug="monitor_two")
+        data = {
+            "slugs": ["monitor_one", "monitor_two"],
+            "status": "disabled",
+        }
+        response = self.get_success_response(self.organization.slug, **data)
+        assert response.status_code == 200
+
+        monitor_one.refresh_from_db()
+        monitor_two.refresh_from_db()
+        assert monitor_one.status == ObjectStatus.DISABLED
+        assert monitor_two.status == ObjectStatus.DISABLED
+
+        data = {
+            "slugs": ["monitor_one", "monitor_two"],
+            "status": "active",
+        }
+        response = self.get_success_response(self.organization.slug, **data)
+
+        assert response.status_code == 200
+
+        monitor_one.refresh_from_db()
+        monitor_two.refresh_from_db()
+        assert monitor_one.status == ObjectStatus.ACTIVE
+        assert monitor_two.status == ObjectStatus.ACTIVE
+
+    @patch("sentry.quotas.backend.check_assign_monitor_seats")
+    def test_enable_no_quota(self, check_assign_monitor_seats):
+        monitor_one = self._create_monitor(slug="monitor_one", status=ObjectStatus.DISABLED)
+        monitor_two = self._create_monitor(slug="monitor_two", status=ObjectStatus.DISABLED)
+        result = SeatAssignmentResult(
+            assignable=False,
+            reason="Over quota",
         )
+        check_assign_monitor_seats.return_value = result
 
-    def test_disabled_creating_with_existing_monitors(self):
         data = {
-            "project": self.project.slug,
-            "name": "My Monitor",
-            "slug": "my-monitor",
-            "type": "cron_job",
-            "config": {"schedule_type": "crontab", "schedule": "@daily"},
+            "slugs": ["monitor_one", "monitor_two"],
+            "status": "active",
         }
-        self.project.flags.has_cron_monitors = True
-        self.project.save()
+        response = self.get_error_response(self.organization.slug, **data)
+        assert response.status_code == 400
+        assert response.data == "Over quota"
 
-        with self.feature("organizations:crons-disable-new-projects"):
-            response = self.get_success_response(self.organization.slug, **data)
-
-        assert response.data["slug"] == "my-monitor"
+        # Verify monitors are still disabled
+        monitor_one.refresh_from_db()
+        monitor_two.refresh_from_db()
+        assert monitor_one.status == ObjectStatus.DISABLED
+        assert monitor_two.status == ObjectStatus.DISABLED

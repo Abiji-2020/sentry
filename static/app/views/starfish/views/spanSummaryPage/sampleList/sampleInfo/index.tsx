@@ -1,8 +1,9 @@
-import {CSSProperties} from 'react';
+import type {CSSProperties} from 'react';
 import styled from '@emotion/styled';
 
 import {RateUnit} from 'sentry/utils/discover/fields';
-import {usePageError} from 'sentry/utils/performance/contexts/pageError';
+import {usePageAlert} from 'sentry/utils/performance/contexts/pageAlert';
+import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import {CountCell} from 'sentry/views/starfish/components/tableCells/countCell';
 import {DurationCell} from 'sentry/views/starfish/components/tableCells/durationCell';
 import {ThroughputCell} from 'sentry/views/starfish/components/tableCells/throughputCell';
@@ -29,7 +30,7 @@ type Props = {
 
 function SampleInfo(props: Props) {
   const {groupId, transactionName, transactionMethod} = props;
-  const {setPageError} = usePageError();
+  const {setPageError} = usePageAlert();
 
   const displayedMetrics = props.displayedMetrics ?? DEFAULT_DISPLAYED_METRICS;
 
@@ -43,7 +44,7 @@ function SampleInfo(props: Props) {
   }
 
   const {data, error} = useSpanMetrics({
-    filters,
+    search: MutableSearch.fromQueryObject(filters),
     fields: [
       SPAN_OP,
       'spm()',
@@ -52,6 +53,7 @@ function SampleInfo(props: Props) {
       'time_spent_percentage()',
       'count()',
     ],
+    enabled: Object.values(filters).every(value => Boolean(value)),
     referrer: 'api.starfish.span-summary-panel-metrics',
   });
 

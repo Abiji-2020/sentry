@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 from rest_framework.permissions import BasePermission
 from rest_framework.request import Request
@@ -10,6 +11,7 @@ from sentry_sdk import Scope
 from sentry.api.base import Endpoint
 from sentry.api.exceptions import ProjectMoved, ResourceDoesNotExist
 from sentry.api.helpers.environments import get_environments
+from sentry.api.permissions import StaffPermissionMixin
 from sentry.api.utils import get_date_range_from_params
 from sentry.constants import ObjectStatus
 from sentry.exceptions import InvalidParams
@@ -41,6 +43,12 @@ class ProjectPermission(OrganizationPermission):
 
         allowed_scopes = set(self.scope_map.get(request.method, []))
         return request.access.has_any_project_scope(project, allowed_scopes)
+
+
+class ProjectAndStaffPermission(StaffPermissionMixin, ProjectPermission):
+    """Allows staff to access project endpoints."""
+
+    pass
 
 
 class StrictProjectPermission(ProjectPermission):

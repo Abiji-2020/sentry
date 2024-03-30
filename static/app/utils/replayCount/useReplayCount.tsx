@@ -1,9 +1,9 @@
 import {useCallback} from 'react';
 
-import {ApiResult} from 'sentry/api';
-import {Organization} from 'sentry/types';
+import type {ApiResult} from 'sentry/api';
+import type {Organization} from 'sentry/types';
 import useAggregatedQueryKeys from 'sentry/utils/api/useAggregatedQueryKeys';
-import {ApiQueryKey} from 'sentry/utils/queryClient';
+import type {ApiQueryKey} from 'sentry/utils/queryClient';
 
 interface Props {
   bufferLimit: number;
@@ -52,6 +52,7 @@ export default function useReplayCount({
   statsPeriod,
 }: Props) {
   const cache = useAggregatedQueryKeys<string, CountState>({
+    cacheKey: `/organizations/${organization.slug}/replay-count/|${dataSource}|${fieldName}|${statsPeriod}`,
     bufferLimit,
     getQueryKey: useCallback(
       (ids: readonly string[]): ApiQueryKey => [

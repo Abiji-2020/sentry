@@ -1,7 +1,7 @@
 import csv
 from contextlib import contextmanager
 from io import StringIO
-from typing import Any, Dict, List
+from typing import Any, TypedDict
 
 import sentry_sdk
 from django.http import HttpResponse
@@ -10,7 +10,6 @@ from rest_framework import serializers
 from rest_framework.exceptions import ParseError
 from rest_framework.request import Request
 from rest_framework.response import Response
-from typing_extensions import TypedDict
 
 from sentry.api.api_owners import ApiOwner
 from sentry.api.api_publish_status import ApiPublishStatus
@@ -109,13 +108,13 @@ class OrgStatsSummaryQueryParamsSerializer(serializers.Serializer):
 class _ProjectSummaryStats(TypedDict):  # this response is pretty dynamic, leaving generic
     id: str
     slug: str
-    stats: List[Dict[str, Any]]
+    stats: list[dict[str, Any]]
 
 
 class StatsSummaryApiResponse(TypedDict):
     start: str
     end: str
-    projects: List[_ProjectSummaryStats]
+    projects: list[_ProjectSummaryStats]
 
 
 @extend_schema(tags=["Organizations"])

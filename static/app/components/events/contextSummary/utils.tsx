@@ -1,7 +1,7 @@
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 
-import {Context} from './types';
+import type {Context} from './types';
 
 const serverSideSdks = [
   'sentry.javascript.nextjs',
@@ -10,6 +10,8 @@ const serverSideSdks = [
   'sentry.javascript.astro',
   'sentry.javascript.sveltekit',
 ];
+
+export const CONTEXT_DOCS_LINK = `https://docs.sentry.io/platform-redirect/?next=/enriching-events/context/`;
 
 function isServerSideRenderedEvent(event: Event) {
   return event.sdk && serverSideSdks.includes(event.sdk.name);

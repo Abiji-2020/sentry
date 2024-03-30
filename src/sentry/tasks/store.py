@@ -1,8 +1,9 @@
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import sentry_sdk
 from django.conf import settings
@@ -14,6 +15,7 @@ from sentry.constants import DEFAULT_STORE_NORMALIZER_ARGS
 from sentry.datascrubbing import scrub_data
 from sentry.eventstore import processing
 from sentry.eventstore.processing.base import Event
+from sentry.features.rollout import in_random_rollout
 from sentry.feedback.usecases.create_feedback import FeedbackCreationSource, create_feedback_issue
 from sentry.killswitches import killswitch_matches_context
 from sentry.lang.native.symbolicator import SymbolicatorTaskKind
@@ -66,13 +68,20 @@ def should_process(data: CanonicalKeyDict) -> bool:
 def submit_process(
     from_reprocessing: bool,
     cache_key: str,
-    event_id: Optional[str],
-    start_time: Optional[int],
+    event_id: str | None,
+    start_time: int | None,
     data_has_changed: bool = False,
     from_symbolicate: bool = False,
     has_attachments: bool = False,
+    is_proguard: bool = False,
 ) -> None:
-    task = process_event_from_reprocessing if from_reprocessing else process_event
+    if from_reprocessing:
+        task = process_event_from_reprocessing
+    elif is_proguard and in_random_rollout("store.separate-proguard-queue-rate"):
+        # route *some* proguard events to a separate queue
+        task = process_event_proguard
+    else:
+        task = process_event
     task.delay(
         cache_key=cache_key,
         start_time=start_time,
@@ -90,13 +99,14 @@ class SaveEventTaskKind:
     from_reprocessing: bool = False
 
 
+@sentry_sdk.tracing.trace
 def submit_save_event(
     task_kind: SaveEventTaskKind,
     project_id: int,
-    cache_key: Optional[str],
-    event_id: Optional[str],
-    start_time: Optional[int],
-    data: Optional[Event],
+    cache_key: str | None,
+    event_id: str | None,
+    start_time: int | None,
+    data: Event | None,
 ) -> None:
     if cache_key:
         data = None
@@ -122,15 +132,18 @@ def submit_save_event(
 
 def _do_preprocess_event(
     cache_key: str,
-    data: Optional[Event],
-    start_time: Optional[int],
-    event_id: Optional[str],
-    process_task: Callable[[Optional[str], Optional[int], Optional[str], bool], None],
-    project: Optional[Project],
+    data: Event | None,
+    start_time: int | None,
+    event_id: str | None,
+    from_reprocessing: bool,
+    project: Project | None,
     has_attachments: bool = False,
 ) -> None:
+    from sentry.lang.java.utils import has_proguard_file
+    from sentry.stacktraces.processing import find_stacktraces_in_data
     from sentry.tasks.symbolication import (
-        get_symbolication_function,
+        get_symbolication_function_for_platform,
+        get_symbolication_platforms,
         should_demote_symbolication,
         submit_symbolicate,
     )
@@ -153,15 +166,23 @@ def _do_preprocess_event(
     else:
         assert project.id == project_id, (project.id, project_id)
 
-    from_reprocessing = process_task is process_event_from_reprocessing
-
     with metrics.timer("tasks.store.preprocess_event.organization.get_from_cache"):
         project.set_cached_field_value(
             "organization", Organization.objects.get_from_cache(id=project.organization_id)
         )
 
-    is_js, symbolication_function = get_symbolication_function(data)
-    if symbolication_function:
+    # Get the list of platforms for which we want to use Symbolicator.
+    # Possible values are `js`, `jvm`, and `native`.
+    # The event will be submitted to Symbolicator for all returned platforms,
+    # one after the other, so we handle mixed stacktraces.
+    stacktraces = find_stacktraces_in_data(data)
+    symbolicate_platforms = get_symbolication_platforms(data, stacktraces)
+    should_symbolicate = len(symbolicate_platforms) > 0
+    if should_symbolicate:
+        first_platform = symbolicate_platforms.pop(0)
+        symbolication_function = get_symbolication_function_for_platform(
+            first_platform, data, stacktraces
+        )
         symbolication_function_name = getattr(symbolication_function, "__name__", "none")
 
         if not killswitch_matches_context(
@@ -177,7 +198,9 @@ def _do_preprocess_event(
 
             is_low_priority = should_demote_symbolication(project_id)
             task_kind = SymbolicatorTaskKind(
-                is_js=is_js, is_low_priority=is_low_priority, is_reprocessing=from_reprocessing
+                platform=first_platform,
+                is_low_priority=is_low_priority,
+                is_reprocessing=from_reprocessing,
             )
             submit_symbolicate(
                 task_kind,
@@ -185,12 +208,13 @@ def _do_preprocess_event(
                 event_id=event_id,
                 start_time=start_time,
                 has_attachments=has_attachments,
+                symbolicate_platforms=symbolicate_platforms,
             )
             return
         # else: go directly to process, do not go through the symbolicate queue, do not collect 200
 
     # NOTE: Events considered for symbolication always go through `do_process_event`
-    if symbolication_function or should_process(data):
+    if should_symbolicate or should_process(data):
         submit_process(
             from_reprocessing=from_reprocessing,
             cache_key=cache_key,
@@ -198,6 +222,7 @@ def _do_preprocess_event(
             start_time=start_time,
             data_has_changed=False,
             has_attachments=has_attachments,
+            is_proguard=has_proguard_file(data),
         )
         return
 
@@ -225,10 +250,10 @@ def _do_preprocess_event(
 )
 def preprocess_event(
     cache_key: str,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project: Optional[Project] = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project: Project | None = None,
     has_attachments: bool = False,
     **kwargs: Any,
 ) -> None:
@@ -237,7 +262,7 @@ def preprocess_event(
         data=data,
         start_time=start_time,
         event_id=event_id,
-        process_task=process_event,
+        from_reprocessing=False,
         project=project,
         has_attachments=has_attachments,
     )
@@ -252,10 +277,10 @@ def preprocess_event(
 )
 def preprocess_event_from_reprocessing(
     cache_key: str,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project: Optional[Project] = None,
+    data: Event | None = None,
+    start_time: float | None = None,
+    event_id: str | None = None,
+    project: Project | None = None,
     **kwargs: Any,
 ) -> None:
     return _do_preprocess_event(
@@ -263,42 +288,44 @@ def preprocess_event_from_reprocessing(
         data=data,
         start_time=start_time,
         event_id=event_id,
-        process_task=process_event_from_reprocessing,
+        from_reprocessing=True,
         project=project,
     )
 
 
-@instrumented_task(
-    name="sentry.tasks.store.retry_process_event",
-    queue="sleep",
-    time_limit=(60 * 5) + 5,
-    soft_time_limit=60 * 5,
-    silo_mode=SiloMode.REGION,
-)
-def retry_process_event(process_task_name: str, task_kwargs: Dict[str, Any], **kwargs: Any) -> None:
-    """
-    The only purpose of this task is be enqueued with some ETA set. This is
-    essentially an implementation of ETAs on top of Celery's existing ETAs, but
-    with the intent of having separate workers wait for those ETAs.
-    """
-    tasks = {
-        "process_event": process_event,
-        "process_event_from_reprocessing": process_event_from_reprocessing,
-    }
+def is_process_disabled(project_id: int, event_id: str, platform: str) -> bool:
+    if killswitch_matches_context(
+        "store.load-shed-process-event-projects",
+        {
+            "project_id": project_id,
+            "event_id": event_id,
+            "platform": platform,
+        },
+    ):
+        return True
 
-    process_task = tasks.get(process_task_name)
-    if not process_task:
-        raise ValueError(f"Invalid argument for process_task_name: {process_task_name}")
+    process_project_rollout = options.get("store.load-shed-process-event-projects-gradual")
+    rollout_rate = process_project_rollout.get(project_id)
+    if not rollout_rate:
+        return False
 
-    process_task.delay(**task_kwargs)
+    return random.random() < rollout_rate
+
+
+@sentry_sdk.tracing.trace
+def normalize_event(data: Any) -> Any:
+    normalizer = StoreNormalizer(
+        remove_other=False, is_renormalize=True, **DEFAULT_STORE_NORMALIZER_ARGS
+    )
+    return normalizer.normalize_event(dict(data))
 
 
 def do_process_event(
     cache_key: str,
-    start_time: Optional[int],
-    event_id: Optional[str],
-    process_task: Callable[[Optional[str], Optional[int], Optional[str], bool], None],
-    data: Optional[Event] = None,
+    start_time: int | None,
+    event_id: str | None,
+    from_reprocessing: bool,
+    data: Event | None = None,
     data_has_changed: bool = False,
     from_symbolicate: bool = False,
     has_attachments: bool = False,
@@ -324,7 +351,7 @@ def do_process_event(
 
     def _continue_to_save_event() -> None:
         task_kind = SaveEventTaskKind(
-            from_reprocessing=process_task is process_event_from_reprocessing,
+            from_reprocessing=from_reprocessing,
             has_attachments=has_attachments,
             is_highcpu=data["platform"] in options.get("store.save-event-highcpu-platforms", []),
         )
@@ -337,14 +364,7 @@ def do_process_event(
             data=data,
         )
 
-    if killswitch_matches_context(
-        "store.load-shed-process-event-projects",
-        {
-            "project_id": project_id,
-            "event_id": event_id,
-            "platform": data.get("platform") or "null",
-        },
-    ):
+    if is_process_disabled(project_id, event_id, data.get("platform") or "null"):
         return _continue_to_save_event()
 
     with sentry_sdk.start_span(op="tasks.store.process_event.get_project_from_cache"):
@@ -390,7 +410,7 @@ def do_process_event(
     # We are fairly confident, however, that this should run *before*
     # re-normalization as it is hard to find sensitive data in partially
     # trimmed strings.
-    if has_changed and options.get("processing.can-use-scrubbers"):
+    if has_changed:
         with sentry_sdk.start_span(op="task.store.datascrubbers.scrub"):
             with metrics.timer(
                 "tasks.store.datascrubbers.scrub", tags={"from_symbolicate": from_symbolicate}
@@ -441,10 +461,7 @@ def do_process_event(
         # - persist e.g. incredibly large stacktraces from minidumps
         # - store event timestamps that are older than our retention window
         #   (also happening with minidumps)
-        normalizer = StoreNormalizer(
-            remove_other=False, is_renormalize=True, **DEFAULT_STORE_NORMALIZER_ARGS
-        )
-        data = normalizer.normalize_event(dict(data))
+        data = normalize_event(data)
 
         issues = data.get("processing_issues")
 
@@ -463,7 +480,14 @@ def do_process_event(
             # If `create_failed_event` indicates that we need to retry we
             # invoke ourselves again.  This happens when the reprocessing
             # revision changed while we were processing.
-            _do_preprocess_event(cache_key, data, start_time, event_id, process_task, project)
+            _do_preprocess_event(
+                cache_key=cache_key,
+                data=data,
+                start_time=start_time,
+                event_id=event_id,
+                from_reprocessing=from_reprocessing,
+                project=project,
+            )
             return
 
         cache_key = processing.event_processing_store.store(data)
@@ -480,8 +504,8 @@ def do_process_event(
 )
 def process_event(
     cache_key: str,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
     data_has_changed: bool = False,
     from_symbolicate: bool = False,
     has_attachments: bool = False,
@@ -501,7 +525,42 @@ def process_event(
         cache_key=cache_key,
         start_time=start_time,
         event_id=event_id,
-        process_task=process_event,
+        from_reprocessing=False,
+        data_has_changed=data_has_changed,
+        from_symbolicate=from_symbolicate,
+        has_attachments=has_attachments,
+    )
+
+
+@instrumented_task(
+    name="sentry.tasks.store.process_event_proguard",
+    queue="events.process_event_proguard",
+    time_limit=65,
+    soft_time_limit=60,
+    silo_mode=SiloMode.REGION,
+)
+def process_event_proguard(
+    cache_key: str,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    data_has_changed: bool = False,
+    from_symbolicate: bool = False,
+    has_attachments: bool = False,
+    **kwargs: Any,
+) -> None:
+    """
+    Handles event processing (for those events that need it)
+
+    :param string cache_key: the cache key for the event data
+    :param int start_time: the timestamp when the event was ingested
+    :param string event_id: the event identifier
+    :param boolean data_has_changed: set to True if the event data was changed in previous tasks
+    """
+    return do_process_event(
+        cache_key=cache_key,
+        start_time=start_time,
+        event_id=event_id,
+        from_reprocessing=False,
         data_has_changed=data_has_changed,
         from_symbolicate=from_symbolicate,
         has_attachments=has_attachments,
@@ -517,8 +576,8 @@ def process_event(
 )
 def process_event_from_reprocessing(
     cache_key: str,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
     data_has_changed: bool = False,
     from_symbolicate: bool = False,
     has_attachments: bool = False,
@@ -528,16 +587,15 @@ def process_event_from_reprocessing(
         cache_key=cache_key,
         start_time=start_time,
         event_id=event_id,
-        process_task=process_event_from_reprocessing,
+        from_reprocessing=True,
         data_has_changed=data_has_changed,
         from_symbolicate=from_symbolicate,
         has_attachments=has_attachments,
     )
 
 
-def delete_raw_event(
-    project_id: int, event_id: Optional[str], allow_hint_clear: bool = False
-) -> None:
+@sentry_sdk.tracing.trace
+def delete_raw_event(project_id: int, event_id: str | None, allow_hint_clear: bool = False) -> None:
     set_current_event_project(project_id)
 
     if event_id is None:
@@ -552,26 +610,28 @@ def delete_raw_event(
 
     # Clear the sent notification if we reprocessed everything
     # successfully and reprocessing is enabled
-    reprocessing_active = ProjectOption.objects.get_value(
-        project_id, "sentry:reprocessing_active", REPROCESSING_DEFAULT
-    )
+    reprocessing_active = ProjectOption.objects.filter(
+        project_id=project_id, key="sentry:reprocessing_active"
+    ).exists()
     if reprocessing_active:
-        sent_notification = ProjectOption.objects.get_value(
-            project_id, "sentry:sent_failed_event_hint", False
-        )
+        sent_notification = ProjectOption.objects.filter(
+            project_id=project_id, key="sentry:sent_failed_event_hint"
+        ).exists()
         if sent_notification:
             if ReprocessingReport.objects.filter(project_id=project_id, event_id=event_id).exists():
-                project = Project.objects.get_from_cache(id=project_id)
-                ProjectOption.objects.set_value(project, "sentry:sent_failed_event_hint", False)
+                ProjectOption.objects.update_value(
+                    project_id=project_id, key="sentry:sent_failed_event_hint", value=False
+                )
 
 
+@sentry_sdk.tracing.trace
 def create_failed_event(
     cache_key: str,
-    data: Optional[Event],
+    data: Event | None,
     project_id: int,
-    issues: List[Dict[str, str]],
-    event_id: Optional[str],
-    start_time: Optional[int] = None,
+    issues: list[dict[str, str]],
+    event_id: str | None,
+    start_time: int | None = None,
     reprocessing_rev: Any = None,
 ) -> bool:
     """If processing failed we put the original data from the cache into a
@@ -644,7 +704,7 @@ def create_failed_event(
     raw_event = RawEvent.objects.create(
         project_id=project_id,
         event_id=event_id,
-        datetime=datetime.utcfromtimestamp(data["timestamp"]).replace(tzinfo=timezone.utc),
+        datetime=datetime.fromtimestamp(data["timestamp"], timezone.utc),
         data=data,
     )
 
@@ -663,11 +723,11 @@ def create_failed_event(
 
 
 def _do_save_event(
-    cache_key: Optional[str] = None,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project_id: Optional[int] = None,
+    cache_key: str | None = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     """
@@ -737,12 +797,13 @@ def _do_save_event(
             with metrics.timer("tasks.store.do_save_event.event_manager.save"):
                 manager = EventManager(data)
                 # event.project.organization is populated after this statement.
-                manager.save(
-                    project_id,
-                    assume_normalized=True,
-                    start_time=start_time,
-                    cache_key=cache_key,
-                )
+                with sentry_sdk.start_span(op="event_manager.save"):
+                    manager.save(
+                        project_id,
+                        assume_normalized=True,
+                        start_time=start_time,
+                        cache_key=cache_key,
+                    )
                 # Put the updated event back into the cache so that post_process
                 # has the most recent data.
                 data = manager.get_data()
@@ -771,18 +832,17 @@ def _do_save_event(
                     time() - start_time,
                     instance=data["platform"],
                     tags={
-                        "is_reprocessing2": "true"
-                        if reprocessing2.is_reprocessed_event(data)
-                        else "false",
+                        "is_reprocessing2": (
+                            "true" if reprocessing2.is_reprocessed_event(data) else "false"
+                        ),
                     },
                 )
 
             time_synthetic_monitoring_event(data, project_id, start_time)
 
 
-def time_synthetic_monitoring_event(
-    data: Event, project_id: int, start_time: Optional[float]
-) -> bool:
+@sentry_sdk.tracing.trace
+def time_synthetic_monitoring_event(data: Event, project_id: int, start_time: float | None) -> bool:
     """
     For special events produced by the recurring synthetic monitoring
     functions, emit timing metrics for:
@@ -838,11 +898,11 @@ def time_synthetic_monitoring_event(
     silo_mode=SiloMode.REGION,
 )
 def save_event(
-    cache_key: Optional[str] = None,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project_id: Optional[int] = None,
+    cache_key: str | None = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     _do_save_event(cache_key, data, start_time, event_id, project_id, **kwargs)
@@ -856,11 +916,11 @@ def save_event(
     silo_mode=SiloMode.REGION,
 )
 def save_event_transaction(
-    cache_key: Optional[str] = None,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project_id: Optional[int] = None,
+    cache_key: str | None = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     _do_save_event(cache_key, data, start_time, event_id, project_id, **kwargs)
@@ -873,11 +933,11 @@ def save_event_transaction(
     silo_mode=SiloMode.REGION,
 )
 def save_event_feedback(
-    cache_key: Optional[str] = None,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project_id: Optional[int] = None,
+    cache_key: str | None = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     create_feedback_issue(data, project_id, FeedbackCreationSource.NEW_FEEDBACK_ENVELOPE)
@@ -891,11 +951,11 @@ def save_event_feedback(
     silo_mode=SiloMode.REGION,
 )
 def save_event_attachments(
-    cache_key: Optional[str] = None,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project_id: Optional[int] = None,
+    cache_key: str | None = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     _do_save_event(cache_key, data, start_time, event_id, project_id, **kwargs)
@@ -908,11 +968,11 @@ def save_event_attachments(
     soft_time_limit=60,
 )
 def save_event_highcpu(
-    cache_key: Optional[str] = None,
-    data: Optional[Event] = None,
-    start_time: Optional[int] = None,
-    event_id: Optional[str] = None,
-    project_id: Optional[int] = None,
+    cache_key: str | None = None,
+    data: Event | None = None,
+    start_time: int | None = None,
+    event_id: str | None = None,
+    project_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     _do_save_event(cache_key, data, start_time, event_id, project_id, **kwargs)

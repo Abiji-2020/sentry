@@ -1,5 +1,5 @@
 import {Fragment} from 'react';
-import {Theme} from '@emotion/react';
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {space} from 'sentry/styles/space';
@@ -12,7 +12,7 @@ type Props = {
 
 export const KeyValueTable = styled('dl')<{noMargin?: boolean}>`
   display: grid;
-  grid-template-columns: 50% 50%;
+  grid-template-columns: fit-content(50%) minmax(0, 1fr);
   ${p => (p.noMargin ? 'margin-bottom: 0;' : null)}
 `;
 
@@ -36,8 +36,8 @@ const commonStyles = ({theme, type}: {type: Props['type']} & {theme: Theme}) => 
     type === 'error'
       ? theme.red100 + ' !important'
       : type === 'warning'
-      ? 'var(--background-warning-default, rgba(245, 176, 0, 0.09)) !important'
-      : 'inherit'
+        ? 'var(--background-warning-default, rgba(245, 176, 0, 0.09)) !important'
+        : 'inherit'
   };
   &:nth-of-type(2n-1) {
     background-color: ${theme.backgroundSecondary};

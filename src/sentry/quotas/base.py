@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum, unique
-from typing import TYPE_CHECKING, Any, List, Literal, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Literal
 
 from django.conf import settings
 from django.core.cache import cache
@@ -22,6 +22,7 @@ class QuotaScope(IntEnum):
     ORGANIZATION = 1
     PROJECT = 2
     KEY = 3
+    GLOBAL = 4
 
     def api_name(self):
         return self.name.lower()
@@ -34,15 +35,17 @@ class AbuseQuota:
     # Org an Sentry option name.
     option: str
     # Quota categories.
-    categories: List[DataCategory]
+    categories: list[DataCategory]
     # Quota Scope.
-    scope: Literal[QuotaScope.ORGANIZATION, QuotaScope.PROJECT]
+    scope: Literal[QuotaScope.ORGANIZATION, QuotaScope.PROJECT, QuotaScope.GLOBAL]
+    # The optional namespace that the quota belongs to.
+    namespace: str | None = None
     # Old org option name still used for compatibility reasons,
     # takes precedence over `option` and `compat_option_sentry`.
-    compat_option_org: Optional[str] = None
+    compat_option_org: str | None = None
     # Old Sentry option name still used for compatibility reasons,
     # takes precedence over `option`.
-    compat_option_sentry: Optional[str] = None
+    compat_option_sentry: str | None = None
 
 
 class QuotaConfig:
@@ -83,7 +86,16 @@ class QuotaConfig:
                         since unlimited quotas can never be exceeded.
     """
 
-    __slots__ = ["id", "categories", "scope", "scope_id", "limit", "window", "reason_code"]
+    __slots__ = [
+        "id",
+        "categories",
+        "scope",
+        "scope_id",
+        "limit",
+        "window",
+        "reason_code",
+        "namespace",
+    ]
 
     def __init__(
         self,
@@ -94,6 +106,7 @@ class QuotaConfig:
         limit: int | None = None,
         window=None,
         reason_code=None,
+        namespace=None,
     ):
         if limit is not None:
             assert reason_code, "reason code required for fallible quotas"
@@ -119,6 +132,7 @@ class QuotaConfig:
         self.limit = limit
         self.window = window
         self.reason_code = reason_code
+        self.namespace = namespace
 
     @property
     def should_track(self):
@@ -140,6 +154,7 @@ class QuotaConfig:
             "categories": categories,
             "limit": self.limit,
             "window": self.window,
+            "namespace": self.namespace,
             "reasonCode": self.reason_code,
         }
 
@@ -204,13 +219,13 @@ class SeatAssignmentResult:
     """
     Can the seat assignment be made?
     """
-    reason: Optional[str] = None
+    reason: str | None = None
     """
     The human readable reason the assignment can be made or not.
     """
 
 
-def index_data_category(event_type: Optional[str], organization) -> DataCategory:
+def index_data_category(event_type: str | None, organization) -> DataCategory:
     if event_type == "transaction" and features.has(
         "organizations:transaction-metrics-extraction", organization
     ):
@@ -404,6 +419,47 @@ class Quota(Service):
                 categories=[DataCategory.METRIC_BUCKET],
                 scope=QuotaScope.ORGANIZATION,
             ),
+            AbuseQuota(
+                id="oacm",
+                option="organization-abuse-quota.custom-metric-bucket-limit",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=QuotaScope.ORGANIZATION,
+                namespace="custom",
+            ),
+            AbuseQuota(
+                id="gam",
+                option="global-abuse-quota.metric-bucket-limit",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=QuotaScope.GLOBAL,
+            ),
+            AbuseQuota(
+                id="gams",
+                option="global-abuse-quota.sessions-metric-bucket-limit",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=QuotaScope.GLOBAL,
+                namespace="sessions",
+            ),
+            AbuseQuota(
+                id="gamt",
+                option="global-abuse-quota.transactions-metric-bucket-limit",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=QuotaScope.GLOBAL,
+                namespace="transactions",
+            ),
+            AbuseQuota(
+                id="gamp",
+                option="global-abuse-quota.spans-metric-bucket-limit",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=QuotaScope.GLOBAL,
+                namespace="spans",
+            ),
+            AbuseQuota(
+                id="gamc",
+                option="global-abuse-quota.custom-metric-bucket-limit",
+                categories=[DataCategory.METRIC_BUCKET],
+                scope=QuotaScope.GLOBAL,
+                namespace="custom",
+            ),
         ]
 
         # XXX: These reason codes are hardcoded in getsentry:
@@ -412,6 +468,7 @@ class Quota(Service):
         reason_codes = {
             QuotaScope.ORGANIZATION: "org_abuse_limit",
             QuotaScope.PROJECT: "project_abuse_limit",
+            QuotaScope.GLOBAL: "global_abuse_limit",
         }
 
         for quota in abuse_quotas:
@@ -441,12 +498,12 @@ class Quota(Service):
             # Negative limits in config mean a reject-all quota.
             if limit < 0:
                 yield QuotaConfig(
+                    limit=0,
                     scope=quota.scope,
                     categories=quota.categories,
-                    limit=0,
                     reason_code="disabled",
+                    namespace=quota.namespace,
                 )
-
             else:
                 yield QuotaConfig(
                     id=quota.id,
@@ -455,6 +512,7 @@ class Quota(Service):
                     categories=quota.categories,
                     window=abuse_window,
                     reason_code=reason_codes[quota.scope],
+                    namespace=quota.namespace,
                 )
 
     def get_monitor_quota(self, project):
@@ -518,11 +576,11 @@ class Quota(Service):
         return (_limit_from_settings(options.get("system.rate-limit")), 60)
 
     def get_blended_sample_rate(
-        self, project: Optional[Project] = None, organization_id: Optional[int] = None
-    ) -> Optional[float]:
+        self, project: Project | None = None, organization_id: int | None = None
+    ) -> float | None:
         """
         Returns the blended sample rate for an org based on the package that they are currently on. Returns ``None``
-        if the the organization doesn't have dynamic sampling.
+        if the organization doesn't have dynamic sampling.
 
         The reasoning for having two params as `Optional` is because this method was first designed to work with
         `Project` but due to requirements change the `Organization` was needed and since we can get the `Organization`
@@ -534,7 +592,7 @@ class Quota(Service):
 
     def get_transaction_sampling_tier_for_volume(
         self, organization_id: int, volume: int
-    ) -> Optional[Tuple[int, float]]:
+    ) -> tuple[int, float] | None:
         """
         Returns the transaction sampling tier closest to a specific volume.
 
@@ -552,6 +610,13 @@ class Quota(Service):
         """
         return SeatAssignmentResult(assignable=True)
 
+    def check_assign_monitor_seats(self, monitor: list[Monitor]) -> SeatAssignmentResult:
+        """
+        Determines if a list of monitor can be assigned seat. If it is not possible
+        to assign a seat to all given monitors, a reason will be included in the response
+        """
+        return SeatAssignmentResult(assignable=True)
+
     def assign_monitor_seat(self, monitor: Monitor) -> int:
         """
         Assigns a monitor a seat if possible, resulting in a Outcome.ACCEPTED.
@@ -566,7 +631,6 @@ class Quota(Service):
         """
         Removes a monitor from it's assigned seat.
         """
-        pass
 
     def check_accept_monitor_checkin(self, project_id: int, monitor_slug: str):
         """

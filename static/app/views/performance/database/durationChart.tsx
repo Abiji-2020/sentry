@@ -1,16 +1,17 @@
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
 import {DurationAggregateSelector} from 'sentry/views/performance/database/durationAggregateSelector';
 import {CHART_HEIGHT} from 'sentry/views/performance/database/settings';
 import {AVG_COLOR} from 'sentry/views/starfish/colours';
-import Chart from 'sentry/views/starfish/components/chart';
+import Chart, {ChartType} from 'sentry/views/starfish/components/chart';
 import ChartPanel from 'sentry/views/starfish/components/chartPanel';
 
 interface Props {
   isLoading: boolean;
   series: Series;
+  error?: Error | null;
 }
 
-export function DurationChart({series, isLoading}: Props) {
+export function DurationChart({series, isLoading, error}: Props) {
   return (
     <ChartPanel title={<DurationAggregateSelector />}>
       <Chart
@@ -23,8 +24,9 @@ export function DurationChart({series, isLoading}: Props) {
         }}
         data={[series]}
         loading={isLoading}
+        error={error}
         chartColors={[AVG_COLOR]}
-        isLineChart
+        type={ChartType.LINE}
       />
     </ChartPanel>
   );

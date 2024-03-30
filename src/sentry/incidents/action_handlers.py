@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import abc
 import logging
-from typing import List, Sequence, Set, Tuple
+from collections.abc import Sequence
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -13,13 +13,8 @@ from sentry import analytics, features
 from sentry.charts.types import ChartSize
 from sentry.constants import CRASH_RATE_ALERT_AGGREGATE_ALIAS
 from sentry.incidents.charts import build_metric_alert_chart
-from sentry.incidents.models import (
-    INCIDENT_STATUS,
-    AlertRuleThresholdType,
-    AlertRuleTriggerAction,
-    IncidentStatus,
-    TriggerStatus,
-)
+from sentry.incidents.models.alert_rule import AlertRuleThresholdType, AlertRuleTriggerAction
+from sentry.incidents.models.incident import INCIDENT_STATUS, IncidentStatus, TriggerStatus
 from sentry.models.rulesnooze import RuleSnooze
 from sentry.models.user import User
 from sentry.notifications.types import NotificationSettingEnum
@@ -113,7 +108,7 @@ class DefaultActionHandler(ActionHandler):
 class EmailActionHandler(ActionHandler):
     provider = "email"
 
-    def _get_targets(self) -> Set[int]:
+    def _get_targets(self) -> set[int]:
         target = self.action.target
         if not target:
             return set()
@@ -150,7 +145,7 @@ class EmailActionHandler(ActionHandler):
 
         return set()
 
-    def get_targets(self) -> Sequence[Tuple[int, str]]:
+    def get_targets(self) -> Sequence[tuple[int, str]]:
         return list(get_email_addresses(self._get_targets(), project=self.project).items())
 
     def fire(
@@ -420,7 +415,7 @@ def generate_incident_trigger_email_context(
 
     tz = settings.SENTRY_DEFAULT_TIME_ZONE
     if user is not None:
-        options: List[RpcUserOption] = user_option_service.get_many(
+        options: list[RpcUserOption] = user_option_service.get_many(
             filter=dict(keys=["timezone"], user_ids=[user.id])
         )
         if options and options[0].value is not None:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Tuple
 
 from django.http.response import HttpResponseBase
 from django.urls import resolve
@@ -23,7 +22,7 @@ class GitlabRequestParser(BaseRequestParser, GitlabWebhookMixin):
     webhook_identifier = WebhookProviderIdentifier.GITLAB
     _integration: Integration | None = None
 
-    def _resolve_external_id(self) -> Tuple[str, str] | HttpResponseBase:
+    def _resolve_external_id(self) -> tuple[str, str] | HttpResponseBase:
         clear_tags_and_context()
         extra = {
             # This tells us the Gitlab version being used (e.g. current gitlab.com version -> GitLab/15.4.0-pre)
@@ -77,7 +76,7 @@ class GitlabRequestParser(BaseRequestParser, GitlabWebhookMixin):
         except (Integration.DoesNotExist, OrganizationIntegration.DoesNotExist):
             return self.get_default_missing_integration_response()
 
-        return self.get_response_from_outbox_creation_for_integration(
+        return self.get_response_from_webhookpayload_for_integration(
             regions=regions, integration=integration
         )
 

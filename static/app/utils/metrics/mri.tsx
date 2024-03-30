@@ -1,5 +1,5 @@
 import {t} from 'sentry/locale';
-import {MetricType, MRI, ParsedMRI, UseCase} from 'sentry/types/metrics';
+import type {MetricType, MRI, ParsedMRI, UseCase} from 'sentry/types/metrics';
 import {parseFunction} from 'sentry/utils/discover/fields';
 
 export const DEFAULT_MRI: MRI = 'c:custom/sentry_metric@none';
@@ -45,6 +45,15 @@ function parseName(name: string, useCase: UseCase): string {
   if (useCase === 'transactions') {
     if (name === 'duration') {
       return 'transaction.duration';
+    }
+    return name;
+  }
+  if (useCase === 'spans') {
+    if (name === 'exclusive_time') {
+      return 'span.self_time';
+    }
+    if (name === 'duration') {
+      return 'span.duration';
     }
     return name;
   }

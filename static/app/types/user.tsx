@@ -72,16 +72,21 @@ interface BaseApiToken {
   dateCreated: string;
   expiresAt: string;
   id: string;
+  name: string;
   scopes: Scope[];
   state: string;
 }
 
-// We include the token for API tokens used for internal apps
+// API Tokens should not be using and storing the token values in the application, as the tokens are secrets.
 export interface InternalAppApiToken extends BaseApiToken {
   application: null;
   refreshToken: string;
-  token: string;
   tokenLastCharacters: string;
+}
+
+// We include the token for new API tokens
+export interface NewInternalAppApiToken extends InternalAppApiToken {
+  token: string;
 }
 
 export type ApiApplication = {

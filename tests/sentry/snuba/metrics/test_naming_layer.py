@@ -60,10 +60,10 @@ def test_invalid_public_name_regex(name):
         "c:sessions/session@none",
         "s:sessions/error@none",
         "g:sessions/error@none",
-        "g:alerts/error@none",
         "g:custom/error@none",
-        "g:issues/error@none",
-        "c:errors/error@none",
+        "c:custom/MyMetric@user",
+        "c:custom/MyMetric.MyService@User",
+        "c:custom/MyMetric.MyService.2@User",
     ],
 )
 def test_valid_mri_schema_regex(name):
@@ -75,12 +75,6 @@ def test_valid_mri_schema_regex(name):
 @pytest.mark.parametrize(
     "name",
     [
-        "e:sessions/healthy.@",
-        "e:sessions/healthy..@",
-        "e:sessions/healthy..crashed@",
-        "e:sessions/.healthy@",
-        "e:sessions/..healthy@",
-        "e:sessions/healthy..crashed.crashed@",
         "t:sessions/error.preaggr@none",
         "e:foo/error.preaggr@none" "foo.bar",
     ],

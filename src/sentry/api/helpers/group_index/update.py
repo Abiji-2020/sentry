@@ -2,26 +2,28 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Dict, Mapping, MutableMapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any
 from urllib.parse import urlparse
 
 import rest_framework
 from django.db import IntegrityError, router, transaction
 from django.db.models import Q
 from django.db.models.signals import post_save
-from django.utils import timezone
+from django.utils import timezone as django_timezone
 from rest_framework import serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from sentry import analytics, features
+from sentry import analytics, features, options
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.actor import ActorSerializer
 from sentry.db.models.query import create_or_update
 from sentry.issues.grouptype import GroupCategory
 from sentry.issues.ignored import handle_archived_until_escalating, handle_ignored
 from sentry.issues.merge import handle_merge
+from sentry.issues.priority import update_priority
 from sentry.issues.status_change import handle_status_update
 from sentry.issues.update_inbox import update_inbox
 from sentry.models.activity import Activity, ActivityIntegration
@@ -52,7 +54,7 @@ from sentry.signals import issue_resolved
 from sentry.tasks.auto_ongoing_issues import TRANSITION_AFTER_DAYS
 from sentry.tasks.integrations import kick_off_status_syncs
 from sentry.types.activity import ActivityType
-from sentry.types.group import SUBSTATUS_UPDATE_CHOICES, GroupSubStatus
+from sentry.types.group import SUBSTATUS_UPDATE_CHOICES, GroupSubStatus, PriorityLevel
 from sentry.utils import metrics
 
 from . import ACTIVITIES_COUNT, BULK_MUTATION_LIMIT, SearchFunction, delete_group_list
@@ -187,6 +189,8 @@ def update_groups(
     else:
         group_list = None
 
+    has_priority = False
+
     serializer = None
     # TODO(jess): We may want to look into refactoring GroupValidator
     # to support multiple projects, but this is pretty complicated
@@ -203,6 +207,8 @@ def update_groups(
         )
         if not serializer.is_valid():
             raise serializers.ValidationError(serializer.errors)
+        if not has_priority and features.has("projects:issue-priority", project, actor=user):
+            has_priority = True
 
     if serializer is None:
         return
@@ -254,6 +260,13 @@ def update_groups(
     res_type = None
     activity_type = None
     activity_data: MutableMapping[str, Any | None] | None = None
+    if has_priority and "priority" in result:
+        handle_priority(
+            priority=result["priority"],
+            group_list=group_list,
+            actor=acting_user,
+            project_lookup=project_lookup,
+        )
     if status in ("resolved", "resolvedInNextRelease"):
         res_status = None
         if status == "resolvedInNextRelease" or status_details.get("inNextRelease"):
@@ -340,7 +353,7 @@ def update_groups(
             activity_data = {}
             new_status_details = {}
 
-        now = timezone.now()
+        now = django_timezone.now()
         metrics.incr("group.resolved", instance=res_type_str, skip_internal=True)
 
         # if we've specified a commit, let's see if its already been released
@@ -472,7 +485,7 @@ def update_groups(
                         group=group, defaults=resolution_params
                     )
                     if not created:
-                        resolution.update(datetime=timezone.now(), **resolution_params)
+                        resolution.update(datetime=django_timezone.now(), **resolution_params)
 
                 if commit:
                     GroupLink.objects.create(
@@ -492,7 +505,7 @@ def update_groups(
                 group.status = GroupStatus.RESOLVED
                 group.substatus = None
                 group.resolved_at = now
-                if affected:
+                if affected and not options.get("groups.enable-post-update-signal"):
                     post_save.send(
                         sender=Group,
                         instance=group,
@@ -585,7 +598,6 @@ def update_groups(
                 acting_user=acting_user,
                 status_details=result.get("statusDetails", {}),
                 sender=update_groups,
-                activity_type=activity_type,
             )
 
     # XXX (ahmed): hack to get the activities to work properly on issues page. Not sure of
@@ -655,9 +667,11 @@ def update_groups(
                 "referer": (
                     "issue stream"
                     if re.search(issue_stream_regex, referer)
-                    else "similar issues tab"
-                    if re.search(similar_issues_tab_regex, referer)
-                    else "unknown"
+                    else (
+                        "similar issues tab"
+                        if re.search(similar_issues_tab_regex, referer)
+                        else "unknown"
+                    )
                 ),
             },
         )
@@ -709,7 +723,7 @@ def handle_is_bookmarked(
     is_bookmarked: bool,
     group_list: Sequence[Group] | None,
     group_ids: Sequence[Group],
-    project_lookup: Dict[int, Project],
+    project_lookup: dict[int, Project],
     acting_user: User | None,
 ) -> None:
     """
@@ -760,10 +774,26 @@ def handle_has_seen(
                     group=group,
                     user_id=user_id,
                     project=project_lookup[group.project_id],
-                    values={"last_seen": timezone.now()},
+                    values={"last_seen": django_timezone.now()},
                 )
     elif has_seen is False:
         GroupSeen.objects.filter(group__in=group_ids, user_id=user_id).delete()
+
+
+def handle_priority(
+    priority: str, group_list: Sequence[Group], actor: User, project_lookup: dict[int, Project]
+) -> None:
+    for group in group_list:
+        priority_value = PriorityLevel.from_str(priority) if priority else None
+
+        update_priority(
+            group=group,
+            priority=priority_value,
+            sender="manual_update_priority",
+            actor=actor,
+            project=project_lookup[group.project_id],
+        )
+        group.update(priority_locked_at=django_timezone.now())
 
 
 def handle_is_public(

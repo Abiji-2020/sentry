@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from time import time
 from unittest import mock
 from unittest.mock import MagicMock, patch
@@ -17,7 +17,6 @@ from django.conf import settings
 from django.core.cache import cache
 from django.test.utils import override_settings
 from django.utils import timezone
-from rest_framework.status import HTTP_404_NOT_FOUND
 
 from fixtures.github import (
     COMPARE_COMMITS_EXAMPLE_WITH_INTERMEDIATE,
@@ -46,6 +45,7 @@ from sentry.event_manager import (
 )
 from sentry.eventstore.models import Event
 from sentry.exceptions import HashDiscarded
+from sentry.grouping.api import GroupingConfig, load_grouping_config
 from sentry.grouping.utils import hash_from_values
 from sentry.ingest.inbound_filters import FilterStatKeys
 from sentry.issues.grouptype import (
@@ -58,7 +58,6 @@ from sentry.issues.issue_occurrence import IssueEvidence
 from sentry.models.activity import Activity
 from sentry.models.auditlogentry import AuditLogEntry
 from sentry.models.commit import Commit
-from sentry.models.commitauthor import CommitAuthor
 from sentry.models.environment import Environment
 from sentry.models.group import Group, GroupStatus
 from sentry.models.groupenvironment import GroupEnvironment
@@ -91,10 +90,11 @@ from sentry.testutils.helpers.datetime import before_now, freeze_time, iso_forma
 from sentry.testutils.outbox import outbox_runner
 from sentry.testutils.performance_issues.event_generators import get_event
 from sentry.testutils.pytest.fixtures import django_db_all
-from sentry.testutils.silo import assume_test_silo_mode_of, region_silo_test
+from sentry.testutils.silo import assume_test_silo_mode_of
 from sentry.testutils.skips import requires_snuba
 from sentry.tsdb.base import TSDBModel
 from sentry.types.activity import ActivityType
+from sentry.types.group import PriorityLevel
 from sentry.usage_accountant import accountant
 from sentry.utils import json
 from sentry.utils.cache import cache_key_for_event
@@ -124,7 +124,6 @@ class EventManagerTestMixin:
         return event
 
 
-@region_silo_test
 class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, PerformanceIssueTestCase):
     def test_similar_message_prefix_doesnt_group(self):
         # we had a regression which caused the default hash to just be
@@ -2116,7 +2115,7 @@ class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, Performan
         manager = EventManager(event)
         manager.normalize()
 
-        grouping_config = {
+        grouping_config: GroupingConfig = {
             "enhancements": enhancement.dumps(),
             "id": "mobile:2021-02-12",
         }
@@ -2126,7 +2125,10 @@ class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, Performan
 
         event2 = Event(event1.project_id, event1.event_id, data=event1.data)
 
-        assert event1.get_hashes().hashes == event2.get_hashes(grouping_config).hashes
+        assert (
+            event1.get_hashes().hashes
+            == event2.get_hashes(load_grouping_config(grouping_config)).hashes
+        )
 
     def test_write_none_tree_labels(self):
         """Write tree labels even if None"""
@@ -2288,6 +2290,7 @@ class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, Performan
                 "location": "/books/",
                 "title": "N+1 Query",
                 "value": description,
+                "initial_priority": PriorityLevel.LOW,
             }
             assert (
                 event.search_message
@@ -2363,6 +2366,7 @@ class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, Performan
                 "location": "/books/",
                 "title": "N+1 Query",
                 "value": "SELECT `books_author`.`id`, `books_author`.`name` FROM `books_author` WHERE `books_author`.`id` = %s LIMIT 21",
+                "initial_priority": PriorityLevel.LOW,
             }
             assert group.location() == "/books/"
             assert group.message == "nope"
@@ -2451,14 +2455,10 @@ class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, Performan
     )
     def test_perf_issue_slow_db_issue_is_created(self):
         def attempt_to_generate_slow_db_issue() -> Event:
-            for _ in range(100):
-                event = self.create_performance_issue(
-                    event_data=make_event(**get_event("slow-db-spans")),
-                    issue_type=PerformanceSlowDBQueryGroupType,
-                )
-                last_event = event
-
-            return last_event
+            return self.create_performance_issue(
+                event_data=make_event(**get_event("slow-db-spans")),
+                issue_type=PerformanceSlowDBQueryGroupType,
+            )
 
         # Should not create the group without the feature flag
         last_event = attempt_to_generate_slow_db_issue()
@@ -2552,7 +2552,6 @@ class EventManagerTest(TestCase, SnubaTestCase, EventManagerTestMixin, Performan
             assert "grouping.in_app_frame_mix" not in metrics_logged
 
 
-@region_silo_test
 class AutoAssociateCommitTest(TestCase, EventManagerTestMixin):
     def setUp(self):
         super().setUp()
@@ -2615,202 +2614,7 @@ class AutoAssociateCommitTest(TestCase, EventManagerTestMixin):
             commit=commit,
         )
 
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_on_sha_release_version(self, get_jwt):
-        with self.feature("projects:auto-associate-commits-to-release"):
-            self._create_first_release_commit()
-            # Make a new release with SHA checksum
-            with self.tasks():
-                _ = self.make_release_event(LATER_COMMIT_SHA, self.project.id)
 
-            release2 = Release.objects.get(version=LATER_COMMIT_SHA)
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=release2).order_by(
-                    "releasecommit__order"
-                )
-            )
-
-            assert len(commit_list) == 2
-            assert commit_list[0].repository_id == self.repo.id
-            assert commit_list[0].organization_id == self.project.organization.id
-            assert commit_list[0].key == EARLIER_COMMIT_SHA
-            assert commit_list[1].repository_id == self.repo.id
-            assert commit_list[1].organization_id == self.project.organization.id
-            assert commit_list[1].key == LATER_COMMIT_SHA
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_first_release(self, get_jwt):
-        with self.feature("projects:auto-associate-commits-to-release"):
-            with self.tasks():
-                _ = self.make_release_event(LATER_COMMIT_SHA, self.project.id)
-
-            release2 = Release.objects.get(version=LATER_COMMIT_SHA)
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=release2).order_by(
-                    "releasecommit__order"
-                )
-            )
-
-            assert len(commit_list) == 2
-            assert commit_list[0].repository_id == self.repo.id
-            assert commit_list[0].organization_id == self.project.organization.id
-            assert commit_list[0].key == EARLIER_COMMIT_SHA
-            assert commit_list[1].repository_id == self.repo.id
-            assert commit_list[1].organization_id == self.project.organization.id
-            assert commit_list[1].key == LATER_COMMIT_SHA
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_not_a_sha(self, get_jwt):
-        SHA = "not-a-sha"
-        with self.feature("projects:auto-associate-commits-to-release"):
-            with self.tasks():
-                _ = self.make_release_event(SHA, self.project.id)
-
-            release2 = Release.objects.get(version=SHA)
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=release2).order_by(
-                    "releasecommit__order"
-                )
-            )
-            assert len(commit_list) == 0
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commit_not_found(self, get_jwt):
-        SHA = "b" * 40
-        responses.add(
-            "GET",
-            f"https://api.github.com/repos/{self.repo_name}/commits/{SHA}",
-            status=HTTP_404_NOT_FOUND,
-        )
-        with self.feature("projects:auto-associate-commits-to-release"):
-            with self.tasks():
-                _ = self.make_release_event(SHA, self.project.id)
-
-            release2 = Release.objects.get(version=SHA)
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=release2).order_by(
-                    "releasecommit__order"
-                )
-            )
-            assert len(commit_list) == 0
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_release_conflict(self, get_jwt):
-        # Release is created but none of the commits, we should still associate commits
-        with self.feature("projects:auto-associate-commits-to-release"):
-            preexisting_release = self.create_release(
-                project=self.project, version=LATER_COMMIT_SHA
-            )
-            with self.tasks():
-                _ = self.make_release_event(LATER_COMMIT_SHA, self.project.id)
-
-            commit_releases = Release.objects.filter(version=LATER_COMMIT_SHA).all()
-            assert len(commit_releases) == 1
-            assert commit_releases[0].id == preexisting_release.id
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=preexisting_release).order_by(
-                    "releasecommit__order"
-                )
-            )
-
-            assert len(commit_list) == 2
-            assert commit_list[0].repository_id == self.repo.id
-            assert commit_list[0].organization_id == self.project.organization.id
-            assert commit_list[0].key == EARLIER_COMMIT_SHA
-            assert commit_list[1].repository_id == self.repo.id
-            assert commit_list[1].organization_id == self.project.organization.id
-            assert commit_list[1].key == LATER_COMMIT_SHA
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_commit_conflict(self, get_jwt):
-        # A commit tied to the release is somehow created before the release itself is created.
-        # autoassociation should tie the existing commit to the new release
-        with self.feature("projects:auto-associate-commits-to-release"):
-            author = CommitAuthor.objects.create(
-                organization_id=self.organization.id,
-                email="support@github.com",
-                name="Monalisa Octocat",
-            )
-
-            # Values taken from commit generated from GH response fixtures
-            preexisting_commit = self.create_commit(
-                repo=self.repo,
-                project=self.project,
-                author=author,
-                key=EARLIER_COMMIT_SHA,
-                message="Fix all the bugs",
-                date_added=datetime(2011, 4, 14, 16, 0, 49, tzinfo=timezone.utc),
-            )
-
-            with self.tasks():
-                self.make_release_event(LATER_COMMIT_SHA, self.project.id)
-
-            new_release = Release.objects.get(version=LATER_COMMIT_SHA)
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=new_release).order_by(
-                    "releasecommit__order"
-                )
-            )
-
-            assert len(commit_list) == 2
-            assert commit_list[0].id == preexisting_commit.id
-            assert commit_list[0].repository_id == self.repo.id
-            assert commit_list[0].organization_id == self.project.organization.id
-            assert commit_list[0].key == EARLIER_COMMIT_SHA
-            assert commit_list[1].repository_id == self.repo.id
-            assert commit_list[1].organization_id == self.project.organization.id
-            assert commit_list[1].key == LATER_COMMIT_SHA
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_feature_not_enabled(self, get_jwt):
-        with self.feature({"projects:auto-associate-commits-to-release": False}):
-            with self.tasks():
-                _ = self.make_release_event(LATER_COMMIT_SHA, self.project.id)
-
-            release2 = Release.objects.get(version=LATER_COMMIT_SHA)
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=release2).order_by(
-                    "releasecommit__order"
-                )
-            )
-
-            assert len(commit_list) == 0
-
-    @mock.patch("sentry.integrations.github.client.get_jwt", return_value=b"jwt_token_1")
-    @responses.activate
-    def test_autoassign_commits_duplicate_events(self, get_jwt):
-        with self.feature({"projects:auto-associate-commits-to-release": True}):
-            with self.tasks():
-                event1 = self.make_release_event(LATER_COMMIT_SHA, self.project.id)
-                event2 = self.make_release_event(LATER_COMMIT_SHA, self.project.id)
-
-            assert event1 != event2
-            assert event1.release == event2.release
-            releases = Release.objects.filter(version=LATER_COMMIT_SHA).all()
-            assert len(releases) == 1
-            commit_list = list(
-                Commit.objects.filter(releasecommit__release=releases[0]).order_by(
-                    "releasecommit__order"
-                )
-            )
-
-            assert len(commit_list) == 2
-            assert commit_list[0].repository_id == self.repo.id
-            assert commit_list[0].organization_id == self.project.organization.id
-            assert commit_list[0].key == EARLIER_COMMIT_SHA
-            assert commit_list[1].repository_id == self.repo.id
-            assert commit_list[1].organization_id == self.project.organization.id
-            assert commit_list[1].key == LATER_COMMIT_SHA
-
-
-@region_silo_test
 class ReleaseIssueTest(TestCase):
     def setUp(self):
         self.project = self.create_project()
@@ -2843,10 +2647,8 @@ class ReleaseIssueTest(TestCase):
             event = manager.save(project_id)
         return event
 
-    def convert_timestamp(self, timestamp):
-        date = datetime.fromtimestamp(timestamp)
-        date = date.replace(tzinfo=timezone.utc)
-        return date
+    def convert_timestamp(self, timestamp: float) -> datetime:
+        return datetime.fromtimestamp(timestamp, tz=UTC)
 
     def assert_release_project_environment(self, event, new_issues_count, first_seen, last_seen):
         release = Release.objects.get(
@@ -2942,7 +2744,6 @@ class ReleaseIssueTest(TestCase):
         )
 
 
-@region_silo_test
 @apply_feature_flag_on_cls("organizations:dynamic-sampling")
 class DSLatestReleaseBoostTest(TestCase):
     def setUp(self):
@@ -2988,15 +2789,15 @@ class DSLatestReleaseBoostTest(TestCase):
 
     @freeze_time("2022-11-03 10:00:00")
     def test_boost_release_with_non_observed_release(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         project = self.create_project(platform="python")
-        release_1 = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release_1 = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
         release_2 = Release.get_or_create(
-            project=project, version="2.0", date_added=datetime.now() + timedelta(hours=1)
+            project=project, version="2.0", date_added=timezone.now() + timedelta(hours=1)
         )
         release_3 = Release.get_or_create(
-            project=project, version="3.0", date_added=datetime.now() + timedelta(hours=2)
+            project=project, version="3.0", date_added=timezone.now() + timedelta(hours=2)
         )
 
         for release, environment in (
@@ -3049,15 +2850,15 @@ class DSLatestReleaseBoostTest(TestCase):
 
     @freeze_time("2022-11-03 10:00:00")
     def test_boost_release_boosts_only_latest_release(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         project = self.create_project(platform="python")
-        release_1 = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release_1 = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
         release_2 = Release.get_or_create(
             project=project,
             version="2.0",
             # We must make sure the new release_2.date_added > release_1.date_added.
-            date_added=datetime.now() + timedelta(hours=1),
+            date_added=timezone.now() + timedelta(hours=1),
         )
 
         # We add a transaction for latest release release_2.
@@ -3099,7 +2900,7 @@ class DSLatestReleaseBoostTest(TestCase):
     @freeze_time("2022-11-03 10:00:00")
     def test_boost_release_with_observed_release_and_different_environment(self):
         project = self.create_project(platform="python")
-        release = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
 
         self.make_release_transaction(
             release_version=release.version,
@@ -3224,7 +3025,7 @@ class DSLatestReleaseBoostTest(TestCase):
     @freeze_time("2022-11-03 10:00:00")
     def test_release_not_boosted_with_observed_release_and_same_environment(self):
         project = self.create_project(platform="python")
-        release = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
 
         for environment in (self.environment1.name, self.environment2.name):
             self.redis_client.set(
@@ -3243,12 +3044,12 @@ class DSLatestReleaseBoostTest(TestCase):
 
     @freeze_time("2022-11-03 10:00:00")
     def test_release_not_boosted_with_deleted_release_after_event_received(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         project = self.create_project(platform="python")
-        release_1 = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release_1 = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
         release_2 = Release.get_or_create(
-            project=project, version="2.0", date_added=datetime.now() + timedelta(hours=1)
+            project=project, version="2.0", date_added=timezone.now() + timedelta(hours=1)
         )
 
         self.make_release_transaction(
@@ -3293,12 +3094,12 @@ class DSLatestReleaseBoostTest(TestCase):
 
     @freeze_time("2022-11-03 10:00:00")
     def test_get_boosted_releases_with_old_and_new_cache_keys(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         project = self.create_project(platform="python")
 
         # Old cache key
-        release_1 = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release_1 = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
         self.redis_client.hset(
             f"ds::p:{project.id}:boosted_releases",
             f"{release_1.id}",
@@ -3307,7 +3108,7 @@ class DSLatestReleaseBoostTest(TestCase):
 
         # New cache key
         release_2 = Release.get_or_create(
-            project=project, version="2.0", date_added=datetime.now() + timedelta(hours=1)
+            project=project, version="2.0", date_added=timezone.now() + timedelta(hours=1)
         )
         self.redis_client.hset(
             f"ds::p:{project.id}:boosted_releases",
@@ -3363,7 +3164,7 @@ class DSLatestReleaseBoostTest(TestCase):
 
     @freeze_time("2022-11-03 10:00:00")
     def test_expired_boosted_releases_are_removed(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         # We want to test with multiple platforms.
         for platform in ("python", "java", None):
@@ -3378,7 +3179,7 @@ class DSLatestReleaseBoostTest(TestCase):
                 release = Release.get_or_create(
                     project=project,
                     version=release_version,
-                    date_added=datetime.now() + timedelta(hours=index),
+                    date_added=timezone.now() + timedelta(hours=index),
                 )
                 self.redis_client.set(
                     f"ds::p:{project.id}:r:{release.id}:e:{environment}", 1, 60 * 60 * 24
@@ -3394,7 +3195,7 @@ class DSLatestReleaseBoostTest(TestCase):
             release_3 = Release.get_or_create(
                 project=project,
                 version=f"3.0-{platform}",
-                date_added=datetime.now() + timedelta(hours=2),
+                date_added=timezone.now() + timedelta(hours=2),
             )
             self.make_release_transaction(
                 release_version=release_3.version,
@@ -3445,18 +3246,18 @@ class DSLatestReleaseBoostTest(TestCase):
     @freeze_time("2022-11-03 10:00:00")
     @mock.patch("sentry.dynamic_sampling.rules.helpers.latest_releases.BOOSTED_RELEASES_LIMIT", 2)
     def test_least_recently_boosted_release_is_removed_if_limit_is_exceeded(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         project = self.create_project(platform="python")
         release_1 = Release.get_or_create(
             project=project,
             version="1.0",
-            date_added=datetime.now(),
+            date_added=timezone.now(),
         )
         release_2 = Release.get_or_create(
             project=project,
             version="2.0",
-            date_added=datetime.now() + timedelta(hours=1),
+            date_added=timezone.now() + timedelta(hours=1),
         )
 
         # We boost with increasing timestamps, so that we know that the smallest will be evicted.
@@ -3475,7 +3276,7 @@ class DSLatestReleaseBoostTest(TestCase):
         release_3 = Release.get_or_create(
             project=project,
             version="3.0",
-            date_added=datetime.now() + timedelta(hours=2),
+            date_added=timezone.now() + timedelta(hours=2),
         )
         self.make_release_transaction(
             release_version=release_3.version,
@@ -3515,10 +3316,10 @@ class DSLatestReleaseBoostTest(TestCase):
     @freeze_time()
     @mock.patch("sentry.dynamic_sampling.rules.helpers.latest_releases.BOOSTED_RELEASES_LIMIT", 2)
     def test_removed_boost_not_added_again_if_limit_is_exceeded(self):
-        ts = datetime.utcnow().replace(tzinfo=timezone.utc).timestamp()
+        ts = timezone.now().timestamp()
 
         project = self.create_project(platform="python")
-        release_1 = Release.get_or_create(project=project, version="1.0", date_added=datetime.now())
+        release_1 = Release.get_or_create(project=project, version="1.0", date_added=timezone.now())
 
         # We want to test that if we have the same release, but we send different environments that go over the
         # limit, and we evict an environment, but then we send a transaction with the evicted environment.
