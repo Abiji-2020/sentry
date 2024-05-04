@@ -8,7 +8,7 @@ import {useLocation} from 'sentry/utils/useLocation';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
 import {computeAxisMax} from 'sentry/views/starfish/components/chart';
-import {useSpanMetricsSeries} from 'sentry/views/starfish/queries/useSpanMetricsSeries';
+import {useSpanMetricsSeries} from 'sentry/views/starfish/queries/useSeries';
 import type {
   SpanIndexedFieldTypes,
   SpanMetricsQueryFilters,
@@ -37,6 +37,7 @@ export type SpanSample = Pick<
   | SpanIndexedField.ID
   | SpanIndexedField.PROFILE_ID
   | SpanIndexedField.HTTP_RESPONSE_CONTENT_LENGTH
+  | SpanIndexedField.TRACE
 >;
 
 export const useSpanSamples = (options: Options) => {

@@ -24,7 +24,7 @@ from sentry.services.hybrid_cloud.identity.model import RpcIdentity
 from sentry.services.hybrid_cloud.integration import integration_service
 from sentry.services.hybrid_cloud.integration.model import RpcIntegration
 from sentry.services.hybrid_cloud.user.service import user_service
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
 from sentry.utils import json, jwt
 from sentry.utils.audit import create_audit_entry
 from sentry.utils.signing import sign
@@ -199,6 +199,22 @@ class MsTeamsWebhookMixin:
             self.infer_integration_id_from_card_action(data=data) is not None
             or self.infer_team_id_from_channel_data(data=data) is not None
         )
+
+    @classmethod
+    def is_new_integration_installation_event(cls, data: Mapping[str, Any]) -> bool:
+        try:
+            raw_event_type = data["type"]
+            event_type = MsTeamsEvents.get_from_value(value=raw_event_type)
+            if event_type != MsTeamsEvents.INSTALLATION_UPDATE:
+                return False
+
+            action = data.get("action", None)
+            if action is None or action != "add":
+                return False
+
+            return True
+        except Exception:
+            return False
 
 
 class MsTeamsEvents(Enum):

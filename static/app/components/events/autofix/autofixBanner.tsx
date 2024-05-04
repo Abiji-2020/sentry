@@ -8,6 +8,10 @@ import bannerStars from 'sentry-images/spot/ai-suggestion-banner-stars.svg';
 import {openModal} from 'sentry/actionCreators/modal';
 import {Button} from 'sentry/components/button';
 import {AutofixInstructionsModal} from 'sentry/components/events/autofix/autofixInstructionsModal';
+import {AutofixCodebaseIndexingStatus} from 'sentry/components/events/autofix/types';
+import {useAutofixCodebaseIndexing} from 'sentry/components/events/autofix/useAutofixCodebaseIndexing';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import {AutofixSetupModal} from 'sentry/components/modals/autofixSetupModal';
 import Panel from 'sentry/components/panels/panel';
 import PanelBody from 'sentry/components/panels/panelBody';
 import {t} from 'sentry/locale';
@@ -15,16 +19,29 @@ import {space} from 'sentry/styles/space';
 import {useIsSentryEmployee} from 'sentry/utils/useIsSentryEmployee';
 
 type Props = {
+  groupId: string;
+  hasSuccessfulSetup: boolean;
+  projectId: string;
   triggerAutofix: (value: string) => void;
 };
 
-export function AutofixBanner({triggerAutofix}: Props) {
+export function AutofixBanner({
+  groupId,
+  projectId,
+  triggerAutofix,
+  hasSuccessfulSetup,
+}: Props) {
   const isSentryEmployee = useIsSentryEmployee();
   const onClickGiveInstructions = () => {
     openModal(deps => (
-      <AutofixInstructionsModal {...deps} triggerAutofix={triggerAutofix} />
+      <AutofixInstructionsModal
+        {...deps}
+        triggerAutofix={triggerAutofix}
+        groupId={groupId}
+      />
     ));
   };
+  const {status: indexingStatus} = useAutofixCodebaseIndexing({projectId, groupId});
 
   return (
     <Wrapper>
@@ -39,14 +56,51 @@ export function AutofixBanner({triggerAutofix}: Props) {
           <SubTitle>{t('You might get lucky, but then again, maybe not...')}</SubTitle>
         </div>
         <ContextArea>
-          <Button onClick={() => triggerAutofix('')} size="sm">
-            {t('Gimme Fix')}
-          </Button>
-          <Button onClick={onClickGiveInstructions} size="sm">
-            {t('Give Instructions')}
-          </Button>
+          {hasSuccessfulSetup ? (
+            <Fragment>
+              <Button
+                onClick={() => triggerAutofix('')}
+                size="sm"
+                analyticsEventKey="autofix.start_fix_clicked"
+                analyticsEventName="Autofix: Start Fix Clicked"
+                analyticsParams={{group_id: groupId}}
+              >
+                {t('Gimme Fix')}
+              </Button>
+              <Button
+                onClick={onClickGiveInstructions}
+                size="sm"
+                analyticsEventKey="autofix.give_instructions_clicked"
+                analyticsEventName="Autofix: Give Instructions Clicked"
+                analyticsParams={{group_id: groupId}}
+              >
+                {t('Give Instructions')}
+              </Button>
+            </Fragment>
+          ) : indexingStatus === AutofixCodebaseIndexingStatus.INDEXING ? (
+            <RowStack>
+              <LoadingIndicator mini />
+              <LoadingMessage>
+                Indexing your repositories, hold tight this may take up to 30 minutes...
+              </LoadingMessage>
+            </RowStack>
+          ) : (
+            <Button
+              analyticsEventKey="autofix.setup_clicked"
+              analyticsEventName="Autofix: Setup Clicked"
+              analyticsParams={{group_id: groupId}}
+              onClick={() => {
+                openModal(deps => (
+                  <AutofixSetupModal {...deps} groupId={groupId} projectId={projectId} />
+                ));
+              }}
+              size="sm"
+            >
+              Setup Autofix
+            </Button>
+          )}
         </ContextArea>
-        {isSentryEmployee && (
+        {isSentryEmployee && hasSuccessfulSetup && (
           <Fragment>
             <Separator />
             <PiiMessage>
@@ -96,6 +150,7 @@ const ContextArea = styled('div')`
 
 const IllustrationContainer = styled('div')`
   display: none;
+  pointer-events: none;
 
   @media (min-width: ${p => p.theme.breakpoints.xlarge}) {
     display: block;
@@ -110,12 +165,11 @@ const IllustrationContainer = styled('div')`
 `;
 
 const Sentaur = styled('img')`
-  height: 125px;
+  height: 110px;
   position: absolute;
   bottom: 0;
   right: 185px;
   z-index: 1;
-  pointer-events: none;
 `;
 
 const Background = styled('img')`
@@ -128,9 +182,9 @@ const Background = styled('img')`
 const Stars = styled('img')`
   pointer-events: none;
   position: absolute;
-  right: -140px;
+  right: -120px;
   bottom: 40px;
-  height: 120px;
+  height: 90px;
 `;
 
 const Separator = styled('hr')`
@@ -140,6 +194,17 @@ const Separator = styled('hr')`
 `;
 
 const PiiMessage = styled('p')`
+  font-size: ${p => p.theme.fontSizeSmall};
+  color: ${p => p.theme.subText};
+`;
+
+const RowStack = styled('div')`
+  display: flex;
+  align-items: center;
+  gap: ${space(0.25)};
+`;
+
+const LoadingMessage = styled('div')`
   font-size: ${p => p.theme.fontSizeSmall};
   color: ${p => p.theme.subText};
 `;

@@ -35,7 +35,7 @@ from sentry.services.hybrid_cloud.region import (
 )
 from sentry.services.hybrid_cloud.rpc import RpcService, regional_rpc_method
 from sentry.services.hybrid_cloud.user.model import RpcUser
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
 
 
 class OrganizationService(RpcService):
@@ -94,6 +94,20 @@ class OrganizationService(RpcService):
         """
         Fetches the organization, by an organization slug. If user_id is passed, it will enforce visibility
         rules. This method is differentiated from get_organization_by_slug by not being cached and returning
+        RpcOrganizationSummary instead of org contexts
+        """
+
+    @regional_rpc_method(resolve=ByOrganizationId("id"), return_none_if_mapping_not_found=True)
+    @abstractmethod
+    def get_org_by_id(
+        self,
+        *,
+        id: int,
+        user_id: int | None = None,
+    ) -> RpcOrganizationSummary | None:
+        """
+        Fetches the organization, by an organization id. If user_id is passed, it will enforce visibility
+        rules. This method is differentiated from get_organization_by_id by not being cached and returning
         RpcOrganizationSummary instead of org contexts
         """
 

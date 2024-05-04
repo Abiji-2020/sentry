@@ -94,6 +94,8 @@ class SearchIssueTestMixin(OccurrenceTestMixin):
         tags: Sequence[tuple[str, Any]] | None = None,
         release: str | None = None,
         user: dict[str, Any] | None = None,
+        event_data: dict[str, Any] | None = None,
+        override_occurrence_data: dict[str, Any] | None = None,
     ) -> tuple[Event, IssueOccurrence, GroupInfo | None]:
         from sentry.utils import snuba
 
@@ -103,6 +105,7 @@ class SearchIssueTestMixin(OccurrenceTestMixin):
         event_data = {
             "tags": [("sentry:user", user_id_val)],
             "timestamp": iso_format(insert_timestamp),
+            **(event_data or {}),
         }
         if tags:
             event_data["tags"].extend(tags)
@@ -122,7 +125,9 @@ class SearchIssueTestMixin(OccurrenceTestMixin):
             data=event_data,
             project_id=project_id,
         )
-        occurrence = self.build_occurrence(event_id=event.event_id, fingerprint=fingerprints)
+        occurrence = self.build_occurrence(
+            event_id=event.event_id, fingerprint=fingerprints, **(override_occurrence_data or {})
+        )
         saved_occurrence, group_info = save_issue_occurrence(occurrence.to_dict(), event)
         self.assert_occurrences_identical(occurrence, saved_occurrence)
 

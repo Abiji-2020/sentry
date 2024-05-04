@@ -22,7 +22,7 @@ from sentry import options
 from sentry.services.hybrid_cloud import ArgumentDict, DelegatedBySiloMode, RpcModel
 from sentry.services.hybrid_cloud.rpcmetrics import RpcMetricRecord
 from sentry.services.hybrid_cloud.sig import SerializableFunctionSignature
-from sentry.silo import SiloMode, SingleProcessSiloModeState
+from sentry.silo.base import SiloMode, SingleProcessSiloModeState
 from sentry.types.region import Region, RegionMappingNotFound
 from sentry.utils import json, metrics
 from sentry.utils.env import in_test_environment
@@ -453,15 +453,11 @@ class _RemoteSiloCall:
 
         return_value = serial_response["value"]
         service, _ = _look_up_service_method(self.service_name, self.method_name)
-        return (
-            None
-            if return_value is None
-            else service.deserialize_rpc_response(self.method_name, return_value)
-        )
+        return service.deserialize_rpc_response(self.method_name, return_value)
 
     def _metrics_tags(self, **additional_tags: str | int) -> Mapping[str, str | int | None]:
         return dict(
-            rpc_destination_region=self.region.name if self.region else None,
+            rpc_destination_region=self.region.name if self.region else "control",
             rpc_method=f"{self.service_name}.{self.method_name}",
             **additional_tags,
         )
@@ -478,11 +474,6 @@ class _RemoteSiloCall:
             "Authorization": f"Rpcsignature {signature}",
         }
 
-        metrics.distribution(
-            "hybrid_cloud.dispatch_rpc.request_size",
-            len(data),
-            tags=self._metrics_tags(),
-        )
         with self._open_request_context():
             self._check_disabled()
             if use_test_client:
@@ -491,11 +482,6 @@ class _RemoteSiloCall:
                 response = self._fire_request(headers, data)
             metrics.incr(
                 "hybrid_cloud.dispatch_rpc.response_code",
-                tags=self._metrics_tags(status=response.status_code),
-            )
-            metrics.distribution(
-                "hybrid_cloud.dispatch_rpc.response_size",
-                len(response.content),
                 tags=self._metrics_tags(status=response.status_code),
             )
 

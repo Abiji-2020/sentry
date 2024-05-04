@@ -1,6 +1,5 @@
 import {cloneElement, Component, isValidElement} from 'react';
 import type {PlainRoute, RouteComponentProps} from 'react-router';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
 import cloneDeep from 'lodash/cloneDeep';
 import isEqual from 'lodash/isEqual';
@@ -31,6 +30,7 @@ import {space} from 'sentry/styles/space';
 import type {Organization, PageFilters, Project} from 'sentry/types';
 import {defined} from 'sentry/utils';
 import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import EventView from 'sentry/utils/discover/eventView';
 import {MetricsCardinalityProvider} from 'sentry/utils/performance/contexts/metricsCardinality';
 import {MetricsResultsMetaProvider} from 'sentry/utils/performance/contexts/metricsEnhancedPerformanceDataContext';
@@ -48,7 +48,6 @@ import {
   getDashboardFiltersFromURL,
   hasUnsavedFilterChanges,
   isWidgetUsingTransactionName,
-  openWidgetPreviewModal,
   resetPageFilters,
 } from 'sentry/views/dashboards/utils';
 import {DataSet} from 'sentry/views/dashboards/widgetBuilder/utils';
@@ -497,8 +496,6 @@ class DashboardDetail extends Component<Props, State> {
   };
 
   handleAddMetricWidget = (layout?: Widget['layout']) => {
-    const {dashboard, router, location} = this.props;
-
     const widgetCopy = cloneDeep(
       assignTempId({
         layout,
@@ -506,19 +503,18 @@ class DashboardDetail extends Component<Props, State> {
       })
     );
 
-    const nextList = generateWidgetsAfterCompaction([...dashboard.widgets, widgetCopy]);
-
-    this.onUpdateWidget(nextList);
-    if (!this.isEditingDashboard) {
-      this.handleUpdateWidgetList(nextList)?.then((newDashboard?: DashboardDetails) => {
-        if (!newDashboard) {
-          return;
-        }
-
-        const lastWidget = newDashboard?.widgets[newDashboard.widgets.length - 1];
-        openWidgetPreviewModal(router, location, lastWidget);
-      });
-    }
+    openWidgetViewerModal({
+      organization: this.props.organization,
+      widget: widgetCopy,
+      onMetricWidgetEdit: widget => {
+        const nextList = generateWidgetsAfterCompaction([
+          ...this.props.dashboard.widgets,
+          widget,
+        ]);
+        this.onUpdateWidget(nextList);
+        this.handleUpdateWidgetList(nextList);
+      },
+    });
   };
 
   onAddWidget = (dataset: DataSet) => {

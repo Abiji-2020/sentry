@@ -4,11 +4,20 @@ import logging
 from datetime import datetime, timezone
 
 import sentry_sdk
+from arroyo import Topic as ArroyoTopic
+from arroyo.backends.kafka import KafkaPayload, KafkaProducer, build_kafka_configuration
 from django.conf import settings
+from sentry_kafka_schemas import get_codec
+from sentry_kafka_schemas.codecs import Codec
+from sentry_kafka_schemas.schema_types.monitors_clock_tick_v1 import ClockTick
 
+from sentry import options
+from sentry.conf.types.kafka_definition import Topic
 from sentry.monitors.tasks.check_missed import check_missing
 from sentry.monitors.tasks.check_timeout import check_timeout
 from sentry.utils import metrics, redis
+from sentry.utils.arroyo_producer import SingletonProducer
+from sentry.utils.kafka_config import get_kafka_producer_cluster_options, get_topic_definition
 
 logger = logging.getLogger("sentry")
 # This key is used to store the last timestamp that the tasks were triggered.
@@ -17,10 +26,30 @@ MONITOR_TASKS_LAST_TRIGGERED_KEY = "sentry.monitors.last_tasks_ts"
 # This key is used to store the hashmap of Mapping[PartitionKey, Timestamp]
 MONITOR_TASKS_PARTITION_CLOCKS = "sentry.monitors.partition_clocks"
 
+CLOCK_TICK_CODEC: Codec[ClockTick] = get_codec("monitors-clock-tick")
 
-def _dispatch_tasks(ts: datetime):
+
+def _int_or_none(s: str | None) -> int | None:
+    if s is None:
+        return None
+    else:
+        return int(s)
+
+
+def _get_producer() -> KafkaProducer:
+    cluster_name = get_topic_definition(Topic.MONITORS_CLOCK_TICK)["cluster"]
+    producer_config = get_kafka_producer_cluster_options(cluster_name)
+    producer_config.pop("compression.type", None)
+    producer_config.pop("message.max.bytes", None)
+    return KafkaProducer(build_kafka_configuration(default_config=producer_config))
+
+
+_clock_tick_producer = SingletonProducer(_get_producer)
+
+
+def _dispatch_tick(ts: datetime):
     """
-    Dispatch monitor tasks triggered by the consumer clock.
+    Dispatch a clock tick which will trigger monitor tasks.
 
     These tasks are triggered via the consumer processing check-ins. This
     allows the monitor tasks to be synchronized to any backlog of check-ins
@@ -34,11 +63,22 @@ def _dispatch_tasks(ts: datetime):
     sentry.io, when we deploy we restart the celery beat worker and it will
     skip any tasks it missed)
     """
-    check_missing.delay(current_datetime=ts)
-    check_timeout.delay(current_datetime=ts)
+    if options.get("crons.use_clock_pulse_consumer"):
+        if settings.SENTRY_EVENTSTREAM != "sentry.eventstream.kafka.KafkaEventStream":
+            # XXX(epurkhiser): Unclear what we want to do if we're not using kafka
+            return
+
+        message: ClockTick = {"ts": ts.timestamp()}
+        payload = KafkaPayload(None, CLOCK_TICK_CODEC.encode(message), [])
+
+        topic = get_topic_definition(Topic.MONITORS_CLOCK_TICK)["real_topic_name"]
+        _clock_tick_producer.produce(ArroyoTopic(topic), payload)
+    else:
+        check_missing.delay(current_datetime=ts)
+        check_timeout.delay(current_datetime=ts)
 
 
-def try_monitor_tasks_trigger(ts: datetime, partition: int):
+def try_monitor_clock_tick(ts: datetime, partition: int):
     """
     Handles triggering the monitor tasks when we've rolled over the minute.
 
@@ -74,9 +114,7 @@ def try_monitor_tasks_trigger(ts: datetime, partition: int):
     # timestamp. Use `int()` to keep the timestamp (score) as an int
     slowest_part_ts = int(slowest_partitions[0][1])
 
-    precheck_last_ts = redis_client.get(MONITOR_TASKS_LAST_TRIGGERED_KEY)
-    if precheck_last_ts is not None:
-        precheck_last_ts = int(precheck_last_ts)
+    precheck_last_ts = _int_or_none(redis_client.get(MONITOR_TASKS_LAST_TRIGGERED_KEY))
 
     # If we have the same or an older timestamp from the most recent tick there
     # is nothing to do, we've already handled this tick.
@@ -90,9 +128,7 @@ def try_monitor_tasks_trigger(ts: datetime, partition: int):
 
     # GETSET is atomic. This is critical to avoid another consumer also
     # processing the same tick.
-    last_ts = redis_client.getset(MONITOR_TASKS_LAST_TRIGGERED_KEY, slowest_part_ts)
-    if last_ts is not None:
-        last_ts = int(last_ts)
+    last_ts = _int_or_none(redis_client.getset(MONITOR_TASKS_LAST_TRIGGERED_KEY, slowest_part_ts))
 
     # Another consumer already handled the tick if the first LAST_TRIGGERED
     # timestamp we got is different from the one we just got from the GETSET.
@@ -118,4 +154,4 @@ def try_monitor_tasks_trigger(ts: datetime, partition: int):
             scope.set_extra("slowest_part_ts", slowest_part_ts)
             sentry_sdk.capture_message("Monitor task dispatch minute skipped")
 
-    _dispatch_tasks(tick)
+    _dispatch_tick(tick)

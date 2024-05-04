@@ -9,7 +9,11 @@ import {
   fieldAlignment,
   parseFunction,
 } from 'sentry/utils/discover/fields';
-import {SpanFunction, SpanMetricsField} from 'sentry/views/starfish/types';
+import {
+  SpanFunction,
+  SpanIndexedField,
+  SpanMetricsField,
+} from 'sentry/views/starfish/types';
 import type {QueryParameterNames} from 'sentry/views/starfish/views/queryParameters';
 
 type Options = {
@@ -22,8 +26,16 @@ type Options = {
 const DEFAULT_SORT_PARAMETER_NAME = 'sort';
 
 const {SPAN_SELF_TIME, HTTP_RESPONSE_CONTENT_LENGTH} = SpanMetricsField;
-const {TIME_SPENT_PERCENTAGE, SPS, SPM, HTTP_ERROR_COUNT, HTTP_RESPONSE_RATE} =
-  SpanFunction;
+const {RESPONSE_CODE, CACHE_ITEM_SIZE} = SpanIndexedField;
+const {
+  TIME_SPENT_PERCENTAGE,
+  SPS,
+  SPM,
+  HTTP_ERROR_COUNT,
+  HTTP_RESPONSE_RATE,
+  CACHE_HIT_RATE,
+  CACHE_MISS_RATE,
+} = SpanFunction;
 
 export const SORTABLE_FIELDS = new Set([
   `avg(${SPAN_SELF_TIME})`,
@@ -40,6 +52,14 @@ export const SORTABLE_FIELDS = new Set([
   `${HTTP_RESPONSE_RATE}(4)`,
   `${HTTP_RESPONSE_RATE}(5)`,
   `avg(${HTTP_RESPONSE_CONTENT_LENGTH})`,
+  `${CACHE_HIT_RATE}()`,
+  `${CACHE_MISS_RATE}()`,
+]);
+
+const NUMERIC_FIELDS = new Set([
+  `${RESPONSE_CODE}`,
+  CACHE_ITEM_SIZE,
+  'transaction.duration',
 ]);
 
 export const renderHeadCell = ({column, location, sort, sortParameterName}: Options) => {
@@ -76,10 +96,16 @@ export const renderHeadCell = ({column, location, sort, sortParameterName}: Opti
 
 export const getAlignment = (key: string): Alignments => {
   const result = parseFunction(key);
+
   if (result) {
     const outputType = aggregateFunctionOutputType(result.name, result.arguments[0]);
+
     if (outputType) {
       return fieldAlignment(key, outputType);
+    }
+  } else {
+    if (NUMERIC_FIELDS.has(key)) {
+      return 'right';
     }
   }
   return 'left';

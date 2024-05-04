@@ -17,18 +17,20 @@ from sentry.api.serializers.models.alert_rule import DetailedAlertRuleSerializer
 from sentry.auth.access import OrganizationGlobalAccess
 from sentry.incidents.models.alert_rule import (
     AlertRule,
+    AlertRuleMonitorType,
     AlertRuleStatus,
     AlertRuleTrigger,
     AlertRuleTriggerAction,
 )
 from sentry.incidents.models.incident import Incident, IncidentStatus
 from sentry.incidents.serializers import AlertRuleSerializer
+from sentry.incidents.utils.types import AlertRuleActivationConditionType
 from sentry.integrations.slack.client import SlackClient
 from sentry.models.auditlogentry import AuditLogEntry
 from sentry.models.organizationmemberteam import OrganizationMemberTeam
 from sentry.services.hybrid_cloud.app import app_service
 from sentry.shared_integrations.exceptions import ApiError
-from sentry.silo import SiloMode
+from sentry.silo.base import SiloMode
 from sentry.tasks.deletion.scheduled import run_scheduled_deletions
 from sentry.tasks.integrations.slack.find_channel_id_for_alert_rule import (
     find_channel_id_for_alert_rule,
@@ -363,6 +365,40 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
             == list(audit_log_entry)[0].ip_address
         )
 
+    def test_monitor_type_with_condition(self):
+        self.create_member(
+            user=self.user, organization=self.organization, role="owner", teams=[self.team]
+        )
+
+        self.login_as(self.user)
+        alert_rule = self.alert_rule
+        serialized_alert_rule = self.get_serialized_alert_rule()
+        serialized_alert_rule["monitorType"] = AlertRuleMonitorType.ACTIVATED.value
+        serialized_alert_rule[
+            "activationCondition"
+        ] = AlertRuleActivationConditionType.RELEASE_CREATION.value
+        with (
+            outbox_runner(),
+            self.feature(["organizations:incidents", "organizations:activated-alert-rules"]),
+        ):
+            resp = self.get_success_response(
+                self.organization.slug, alert_rule.id, **serialized_alert_rule
+            )
+        alert_rule = AlertRule.objects.get(id=resp.data["id"])
+        alert_rule.monitorType = AlertRuleMonitorType.ACTIVATED.value
+        alert_rule.activationCondition = AlertRuleActivationConditionType.RELEASE_CREATION.value
+        alert_rule.date_modified = resp.data["dateModified"]
+        assert resp.data == serialize(alert_rule)
+
+        # TODO: determine how to convert activated alert into continuous alert and vice versa (see logic.py)
+        # requires creating/disabling activations accordingly
+        # assert resp.data["monitorType"] == AlertRuleMonitorType.ACTIVATED.value
+        # assert (
+        #     resp.data["activationCondition"]
+        #     == AlertRuleActivationConditionType.RELEASE_CREATION.value
+        # )
+        assert resp.data["dateModified"] > serialized_alert_rule["dateModified"]
+
     def test_not_updated_fields(self):
         self.create_member(
             user=self.user, organization=self.organization, role="owner", teams=[self.team]
@@ -617,7 +653,8 @@ class AlertRuleDetailsPutEndpointTest(AlertRuleDetailsBase):
         )
         self.login_as(self.user)
         alert_rule = self.alert_rule
-        alert_rule.owner = self.team.actor
+        alert_rule.team = self.team
+        alert_rule.user_id = None
         alert_rule.save()
         # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
         serialized_alert_rule = self.get_serialized_alert_rule()
@@ -1258,7 +1295,7 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
         )
         self.login_as(self.user)
         alert_rule = self.alert_rule
-        alert_rule.owner = self.team.actor
+        alert_rule.team = self.team
         alert_rule.save()
         # We need the IDs to force update instead of create, so we just get the rule using our own API. Like frontend would.
         OrganizationMemberTeam.objects.filter(
@@ -1269,7 +1306,7 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
             resp = self.get_response(self.organization.slug, alert_rule.id)
         assert resp.status_code == 204
         another_alert_rule = self.alert_rule
-        alert_rule.owner = self.team.actor
+        alert_rule.team = self.team
         another_alert_rule.save()
         self.create_team_membership(team=self.team, member=om)
         with self.feature("organizations:incidents"):
@@ -1284,7 +1321,6 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
         team = self.create_team(organization=self.organization, members=[self.user])
         project = self.create_project(name="boo", organization=self.organization, teams=[team])
         alert_rule = self.create_alert_rule(projects=[project])
-        alert_rule.owner = team.actor
         alert_rule.team_id = team.id
         alert_rule.save()
 
@@ -1295,7 +1331,6 @@ class AlertRuleDetailsDeleteEndpointTest(AlertRuleDetailsBase):
             name="ahh", organization=self.organization, teams=[other_team]
         )
         other_alert_rule = self.create_alert_rule(projects=[other_project])
-        other_alert_rule.owner = other_team.actor
         other_alert_rule.team_id = other_team.id
         other_alert_rule.save()
 
